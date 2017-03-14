@@ -68,10 +68,15 @@ object Driver {
   /** Create driver with default pipeline for this configuration. */
   def apply(config: tools.Config): Driver = {
     val optPasses = config.mode match {
-      case Mode.Debug   => fastOptPasses
-      case Mode.Release => fullOptPasses
+      case Mode.Debug       => fastOptPasses
+      case Mode.Release     => fullOptPasses
+      case Mode.Interpreted => Seq()
     }
-    new Impl(injectionPasses ++ optPasses ++ loweringPasses)
+    val finalPasses = config.mode match {
+      case Mode.Interpreted => Seq()
+      case _                => loweringPasses
+    }
+    new Impl(injectionPasses ++ optPasses ++ finalPasses)
   }
 
   /** Create an empty pass-lesss driver. */

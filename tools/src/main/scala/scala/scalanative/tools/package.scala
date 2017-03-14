@@ -50,14 +50,16 @@ package object tools {
 
   /** Transform high-level closed world to its lower-level counterpart. */
   def optimize(
-      config: Config,
-      driver: OptimizerDriver,
-      assembly: Seq[nir.Defn],
-      dyns: Seq[String],
-      reporter: OptimizerReporter = OptimizerReporter.empty): Seq[nir.Defn] =
+                config: Config,
+                driver: OptimizerDriver,
+                assembly: Seq[nir.Defn],
+                dyns: Seq[String],
+                reporter: OptimizerReporter = OptimizerReporter.empty): Seq[nir.Defn] =
     optimizer.Optimizer(config, driver, assembly, dyns, reporter)
 
   /** Given low-level assembly, emit LLVM IR for it to the buildDirectory. */
-  def codegen(config: Config, assembly: Seq[nir.Defn]): Unit =
-    scalanative.codegen.CodeGen(config, assembly)
+  def codegen(config: Config, assembly: Seq[nir.Defn]): Unit = config.mode match {
+    case Mode.Interpreted => scalanative.nbc.ByteCodeGen(config, assembly)
+    case _                => scalanative.codegen.CodeGen(config, assembly)
+  }
 }
