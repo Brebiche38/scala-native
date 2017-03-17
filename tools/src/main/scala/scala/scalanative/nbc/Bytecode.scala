@@ -3,32 +3,39 @@ package nbc
 
 import scala.scalanative.util.unsupported
 
-sealed abstract class Bytecode
+sealed abstract class Bytecode {
+  def toStr: String = this.getClass.getSimpleName.toLowerCase.filter(_.isLetter)
+}
 
 object Bytecode {
   type Offset = Int
+  type Instr = (Bytecode, Seq[Arg])
 
-  final case class Mov(size: Int) extends Bytecode
+  final case class Mov(size: Int) extends Bytecode {
+    override def toStr: String = super.toStr + "." + size.toString
+  }
   
-  sealed abstract class Arith extends Bytecode
-  final case class Add (size: Int) extends Arith
-  final case class FAdd(size: Int) extends Arith
-  final case class Sub (size: Int) extends Arith
-  final case class FSub(size: Int) extends Arith
-  final case class Mul (size: Int) extends Arith
-  final case class FMul(size: Int) extends Arith
-  final case class Div (size: Int) extends Arith
-  final case class UDiv(size: Int) extends Arith
-  final case class FDiv(size: Int) extends Arith
-  final case class Rem (size: Int) extends Arith
-  final case class URem(size: Int) extends Arith
-  final case class FRem(size: Int) extends Arith
-  final case class Shl (size: Int) extends Arith
-  final case class LShr(size: Int) extends Arith
-  final case class AShr(size: Int) extends Arith
-  final case class And (size: Int) extends Arith
-  final case class Or  (size: Int) extends Arith
-  final case class Xor (size: Int) extends Arith
+  sealed abstract class Arith(val size: Int) extends Bytecode {
+    override def toStr: String = super.toStr + "." + size.toString
+  }
+  final case class Add (override val size: Int) extends Arith(size)
+  final case class FAdd(override val size: Int) extends Arith(size)
+  final case class Sub (override val size: Int) extends Arith(size)
+  final case class FSub(override val size: Int) extends Arith(size)
+  final case class Mul (override val size: Int) extends Arith(size)
+  final case class FMul(override val size: Int) extends Arith(size)
+  final case class Div (override val size: Int) extends Arith(size)
+  final case class UDiv(override val size: Int) extends Arith(size)
+  final case class FDiv(override val size: Int) extends Arith(size)
+  final case class Rem (override val size: Int) extends Arith(size)
+  final case class URem(override val size: Int) extends Arith(size)
+  final case class FRem(override val size: Int) extends Arith(size)
+  final case class Shl (override val size: Int) extends Arith(size)
+  final case class LShr(override val size: Int) extends Arith(size)
+  final case class AShr(override val size: Int) extends Arith(size)
+  final case class And (override val size: Int) extends Arith(size)
+  final case class Or  (override val size: Int) extends Arith(size)
+  final case class Xor (override val size: Int) extends Arith(size)
 
   def convertBin(bin: nir.Bin, ty: nir.Type): Arith = {
     val size = convertSize(ty)
@@ -54,10 +61,12 @@ object Bytecode {
     }
   }
 
-  sealed abstract class Comp extends Bytecode
-  final case class SCmp(size: Int) extends Comp
-  final case class UCmp(size: Int) extends Comp
-  final case class FCmp(size: Int) extends Comp
+  sealed abstract class Comp(val size: Int) extends Bytecode {
+    override def toStr: String = super.toStr + "." + size.toString
+  }
+  final case class SCmp(override val size: Int) extends Comp(size)
+  final case class UCmp(override val size: Int) extends Comp(size)
+  final case class FCmp(override val size: Int) extends Comp(size)
 
   sealed abstract class SetIf extends Bytecode
   final case object SetEq extends SetIf
@@ -89,16 +98,18 @@ object Bytecode {
     }
   }
 
-  sealed abstract class Conv extends Bytecode
-  final case class Trunc(before: Int, after: Int) extends Conv
-  final case class Zext(before: Int, after: Int) extends Conv
-  final case class Sext(before: Int, after: Int) extends Conv
-  final case class FpTrunc(before: Int, after: Int) extends Conv
-  final case class FpExt(before: Int, after: Int) extends Conv
-  final case class F2I(before: Int, after: Int) extends Conv
-  final case class F2UI(before: Int, after: Int) extends Conv
-  final case class I2F(before: Int, after: Int) extends Conv
-  final case class UI2F(before: Int, after: Int) extends Conv
+  sealed abstract class Conv(val before: Int, val after: Int) extends Bytecode {
+    override def toStr: String = super.toStr + "." + before.toString + "." + after.toString
+  }
+  final case class Trunc(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class Zext(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class Sext(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class FpTrunc(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class FpExt(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class F2I(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class F2UI(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class I2F(override val before: Int, override val after: Int) extends Conv(before, after)
+  final case class UI2F(override val before: Int, override val after: Int) extends Conv(before, after)
 
   def convertConv(conv: nir.Conv, ta: nir.Type, tb: nir.Type): Bytecode = {
     val sa = convertSize(ta)
@@ -131,13 +142,17 @@ object Bytecode {
   final case object Ret extends CF
   final case object Crash extends CF
 
-  sealed abstract class Stack extends Bytecode
-  final case class Push(size: Int) extends Stack
-  final case class Pop(size: Int) extends Stack
+  sealed abstract class Stack(val size: Int) extends Bytecode {
+    override def toStr: String = super.toStr + "." + size.toString
+  }
+  final case class Push(override val size: Int) extends Stack(size)
+  final case class Pop(override val size: Int) extends Stack(size)
 
-  sealed abstract class Memory extends Bytecode
-  final case class Load(size: Int) extends Memory
-  final case class Store(size: Int) extends Memory
+  sealed abstract class Memory(val size: Int) extends Bytecode {
+    override def toStr: String = super.toStr + "." + size.toString
+  }
+  final case class Load(override val size: Int) extends Memory(size)
+  final case class Store(override val size: Int) extends Memory(size)
 
   final case object Nop extends Bytecode
 
@@ -162,6 +177,18 @@ object Bytecode {
   }
 
   def sizeof(ty: nir.Type): Offset = ty match {
-    case _ => 1
+    case nir.Type.Ptr            => 8
+    case nir.Type.I(w, _)        => w / 8
+    case nir.Type.F(w)           => w / 8
+    case nir.Type.Array(ty, n)   => n * sizeof(ty)
+    case nir.Type.Struct(_, tys) => tys.map(sizeof).sum
+    case nir.Type.Class(n)       => 0 // TODO
+    case nir.Type.Trait(n)       => 0 // TODO
+    case nir.Type.Module(n)      => 0 // TODO
+  }
+
+  def show(op: Bytecode, args: Seq[Arg]): String = {
+    val opStr = op.toStr
+    opStr + " "*(12 - opStr.length) + args.map(_.toStr).mkString(", ")
   }
 }
