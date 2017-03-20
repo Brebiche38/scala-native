@@ -162,7 +162,7 @@ object ByteCodeGen {
       str(BC.sizeof(ty))
       str("]: ")
 
-      genVal(rhs)
+      str(genVal(rhs))
     }
 
     def genFunctionDefn(name: Global,
@@ -188,9 +188,23 @@ object ByteCodeGen {
 
       newline()
       val cfg = CFG(insts)
+
+      insts.foreach(allocateInst)
+
       cfg.foreach { block =>
         genBlock(block)(cfg)
       }
+    }
+
+    def allocateInst(inst: Inst):Unit = inst match {
+      case Inst.Let(n, _) =>
+        allocator.put(n, Arg.R(nextReg))
+        nextReg += 1
+      case Inst.Label(_, ps) => ps.foreach { case Val.Local(n, _) =>
+        allocator.put(n, Arg.R(nextReg))
+        nextReg += 1
+      }
+      case _ => ()
     }
 
     def genBlock(block: Block)(implicit cfg: CFG): Unit = {
@@ -209,16 +223,10 @@ object ByteCodeGen {
 
       if (block.isEntry) {
         params.foreach { p =>
-          allocator.put(p.name, Arg.R(nextReg))
-          nextReg += 1
-
           genBytecode(BC.Pop(BC.convertSize(p.ty)), Seq(p))
         }
       } else if (block.isRegular) {
         params.zipWithIndex.foreach { case (param, id) =>
-          allocator.put(param.name, Arg.R(nextReg))
-          nextReg += 1
-
           block.inEdges.foreach { case Edge(_, _, Next.Label(_, vals)) =>
               genBytecode(BC.Mov(BC.convertSize(param.ty)), Seq(param, vals(id)))
           }
@@ -420,10 +428,10 @@ object ByteCodeGen {
       case Val.Float(v)      => v.toString
       case Val.Double(v)     => v.toString
       case Val.String(s)     => "\"" + s + "\""
-      case Val.Struct(_, vs) => "{ " + rep(vs, sep = ", ")(genVal) + " }"
-      case Val.Array(_, vs)  => "[ " + rep(vs, sep = ", ")(genVal) + " ]"
+      case Val.Struct(_, vs) => "{ " + vs.map(genVal).mkString(", ") + " }"
+      case Val.Array(_, vs)  => "[ " + vs.map(genVal).mkString(", ") + " ]"
       case Val.Chars(v)      => "c\"" + v + "\\00\""
-      case Val.Global(n, ty) => "M[" + globalOffsets.getOrElse(n, -1).toString + "]"
+      case Val.Global(n, ty) => "M[" + globalOffsets.getOrElse(n, unsupported(n)).toHexString + "]"
       case _                 => unsupported(v)
     }
 
@@ -435,7 +443,7 @@ object ByteCodeGen {
     }
 
     def getLocal(local: Local): Arg = {
-      allocator.getOrElse(local, Arg.R(-1) /* unsupported(g) */)
+      allocator.getOrElse(local, unsupported(local))
     }
 
     def genUnsupported(): Unit = {
