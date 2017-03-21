@@ -28,11 +28,11 @@ object Arg {
   }
 
   case class G(name: nir.Global) extends Arg {
-    val toStr = name.toString
+    val toStr = name.show
   }
 
-  case class M(addr: Int) extends Arg {
-    val toStr = "M[0x" + Integer.toHexString(addr) + "]"
+  case class M(addr: Bytecode.Offset) extends Arg {
+    val toStr = "0x" + addr.toHexString
   }
 
   case object None extends Arg {

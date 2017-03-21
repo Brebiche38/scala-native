@@ -8,7 +8,7 @@ sealed abstract class Bytecode {
 }
 
 object Bytecode {
-  type Offset = Int
+  type Offset = Long
   type Instr = (Bytecode, Seq[Arg])
 
   final case class Mov(size: Int) extends Bytecode {

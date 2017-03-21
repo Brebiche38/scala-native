@@ -11,6 +11,7 @@ import scala.scalanative.io.{VirtualDirectory, withScratchBuffer}
 import scala.scalanative.optimizer.analysis.ControlFlow.{Block, Edge, Graph => CFG}
 import scala.scalanative.nir._
 import scala.scalanative.nbc.{Bytecode => BC}
+import scala.scalanative.optimizer.analysis.MemoryLayout
 
 object ByteCodeGen {
 
@@ -51,10 +52,10 @@ object ByteCodeGen {
 
     def gen(buffer: ByteBuffer) = {
       val definitions = defns.sortBy {
-        case _: Defn.Const  => 1
-        case _: Defn.Var    => 2
-        case _: Defn.Define => 3
-        case _              => -1
+        case Defn.Const(_,_,ty,_) => -MemoryLayout.sizeOf(ty)
+        case Defn.Var(_,_,ty,_)   => -MemoryLayout.sizeOf(ty)
+        case _: Defn.Define       => 3
+        case _                    => -1
       }
       // Step 1: resolve top and string addresses
       populateOffsets(definitions)
@@ -120,8 +121,8 @@ object ByteCodeGen {
       case nir.Val.None => nextOffset += 1
       case nir.Val.True => nextOffset += 1
       case nir.Val.False => nextOffset += 1
-      case nir.Val.Zero(ty) => nextOffset += BC.sizeof(ty)
-      case nir.Val.Undef(ty) => nextOffset += BC.sizeof(ty)
+      case nir.Val.Zero(ty) => nextOffset += MemoryLayout.sizeOf(ty)
+      case nir.Val.Undef(ty) => nextOffset += MemoryLayout.sizeOf(ty)
       case nir.Val.Byte(_) => nextOffset += 1
       case nir.Val.Short(_) => nextOffset += 2
       case nir.Val.Int(_) => nextOffset += 4
@@ -132,7 +133,7 @@ object ByteCodeGen {
       case nir.Val.Array(ty, vs) => vs.foreach(populateVal)
       case nir.Val.Chars(v) => nextOffset += v.length
       case nir.Val.Global(n, ty) =>
-        globalOffsets.put(n, nextOffset)
+        //globalOffsets.put(n, nextOffset)
         nextOffset += 8
       case nir.Val.String(s) =>
         stringOffsets.put(s, nextOffset)
@@ -157,7 +158,7 @@ object ByteCodeGen {
                       rhs: nir.Val): Unit = {
       newline()
       str("0x")
-      str(Integer.toHexString(globalOffsets.getOrElse(name, throw new Exception("Offset should be in map"))))
+      str(globalOffsets.getOrElse(name, throw new Exception("Offset should be in map")).toHexString)
       str("[")
       str(BC.sizeof(ty))
       str("]: ")
@@ -178,7 +179,7 @@ object ByteCodeGen {
 
       newline()
       str("0x")
-      str(Integer.toHexString(offset))
+      str(offset.toHexString)
       str(": ")
 
       // Initialize register allocation
@@ -228,7 +229,7 @@ object ByteCodeGen {
       } else if (block.isRegular) {
         params.zipWithIndex.foreach { case (param, id) =>
           block.inEdges.foreach { case Edge(_, _, Next.Label(_, vals)) =>
-              genBytecode(BC.Mov(BC.convertSize(param.ty)), Seq(param, vals(id)))
+              genBytecode(BC.Mov(BC.convertSize(param.valty)), Seq(param, vals(id)))
           }
         }
       } else if (block.isExceptionHandler) {
@@ -409,7 +410,7 @@ object ByteCodeGen {
       case Val.Unit          => Arg.None // TODO
       case Val.None          => Arg.None // TODO
       case Val.String(s)     =>
-        val addr: Int = stringOffsets.getOrElse(s, -1)
+        val addr: BC.Offset = stringOffsets.getOrElse(s, -1)
         Arg.I(addr)
       case Val.Local(n, ty)  => getLocal(n)
       case Val.Global(n, ty) => getGlobal(n)
