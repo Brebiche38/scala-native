@@ -37,111 +37,40 @@ object ByteCodeGen {
                            targetDirectory: VirtualDirectory) {
     val builder         = new ShowBuilder
 
+    val bytecode        = mutable.Buffer.empty[BC.Instr]
+
+    var nextOffset: BC.Offset = 0
     val globalOffsets   = mutable.Map.empty[Global, BC.Offset]
     val stringOffsets   = mutable.Map.empty[String, BC.Offset]
-    var nextOffset: BC.Offset = 0
-    val labelOffsets    = mutable.Map.empty[(Global, Local), BC.Offset]
+    val labelOffsets    = mutable.Map.empty[Global, mutable.Map[Local, BC.Offset]]
 
+    var currentFun: Global = _
     val allocator       = mutable.Map.empty[Local, Arg]
     var nextReg         = 0
-    var currentFun: Global = _
+    val funRegisters    = mutable.Map.empty[Global, Int]
 
-    //var numDone: Int = 0
+    var nextPrintOffset = 0
+
+    val definitions = defns.sortBy {
+      case Defn.Const(_,_,ty,_) => MemoryLayout.sizeOf(ty)
+      case Defn.Var(_,_,ty,_)   => MemoryLayout.sizeOf(ty)
+      case _: Defn.Define       => Integer.MAX_VALUE
+      case _                    => -1
+    }
 
     import builder._
 
     def gen(buffer: ByteBuffer) = {
-      val definitions = defns.sortBy {
-        case Defn.Const(_,_,ty,_) => -MemoryLayout.sizeOf(ty)
-        case Defn.Var(_,_,ty,_)   => -MemoryLayout.sizeOf(ty)
-        case _: Defn.Define       => 3
-        case _                    => -1
-      }
-      // Step 1: resolve top and string addresses
-      populateOffsets(definitions)
-
-      // Step 2: produce output
+      // Step 1: produce bytecode
       genDefns(definitions)
+
+      // Step 2: resolve global offsets and print result
+      bytecode.foreach(printBytecode)
       buffer.put(builder.toString.getBytes)
       // TODO include scalanative functions
     }
 
-    def populateOffsets(defns: Seq[Defn]): Unit = {
-      defns.foreach {
-        case Defn.Const(_, name, ty, rhs) =>
-          populateGlobals(name, ty, rhs)
-        case Defn.Var(_, name, ty, rhs) =>
-          populateGlobals(name, ty, rhs)
-        case Defn.Define(_, name, sig, insts) =>
-          populateFunction(name, sig, insts)
-        case _ => ()
-      }
-    }
-
-    def populateGlobals(name: Global, ty: nir.Type, rhs: nir.Val): Unit = {
-      globalOffsets.put(name, nextOffset)
-
-      populateVal(rhs)
-    }
-
-    def populateFunction(name: Global, sig: Type, insts: Seq[Inst]): Unit = {
-      globalOffsets.put(name, nextOffset)
-
-      insts.foreach(populateInst(_)(name))
-    }
-
-    def populateInst(i: Inst)(implicit f: Global): Unit = i match {
-      case nir.Inst.None             => ()
-      case nir.Inst.Label(n, ps)     =>
-        labelOffsets.put((f, n), nextOffset)
-        nextOffset += ps.length
-      case nir.Inst.Let(_, op)       => populateOp(op)
-      case nir.Inst.Unreachable      => nextOffset += 1
-      case nir.Inst.Ret(v)           => nextOffset += (if (isReturnable(v)) 2 else 1)
-      case _: nir.Inst.Jump          => nextOffset += 1
-      case _: nir.Inst.If            => nextOffset += 4
-      case nir.Inst.Switch(_, _, cs) =>
-        // TODO add cases to labels
-        nextOffset += 1 + cs.length*2
-      case _: nir.Inst.Throw         => nextOffset += 1
-    }
-
-    def populateOp(op: Op): Unit = op match {
-      case Op.Call(Type.Function(_, resty), _, args, _) =>
-        nextOffset += 1 + args.length + (if (isReturnable(resty)) 1 else 0)
-      case _: Op.Bin  => nextOffset += 2
-      case _: Op.Comp => nextOffset += 3
-      case _          => nextOffset += 1
-    }
-
-    def isReturnable(v: nir.Val): Boolean = !(v == nir.Val.None || v == nir.Val.Unit)
-    def isReturnable(t: nir.Type): Boolean = BC.convertSize(t) > 0
-
-    def populateVal(v: nir.Val): Unit = v match {
-      case nir.Val.None => nextOffset += 1
-      case nir.Val.True => nextOffset += 1
-      case nir.Val.False => nextOffset += 1
-      case nir.Val.Zero(ty) => nextOffset += MemoryLayout.sizeOf(ty)
-      case nir.Val.Undef(ty) => nextOffset += MemoryLayout.sizeOf(ty)
-      case nir.Val.Byte(_) => nextOffset += 1
-      case nir.Val.Short(_) => nextOffset += 2
-      case nir.Val.Int(_) => nextOffset += 4
-      case nir.Val.Long(_) => nextOffset += 8
-      case nir.Val.Float(v) => nextOffset += 4
-      case nir.Val.Double(v) => nextOffset += 8
-      case nir.Val.Struct(n, vs) => vs.foreach(populateVal)
-      case nir.Val.Array(ty, vs) => vs.foreach(populateVal)
-      case nir.Val.Chars(v) => nextOffset += v.length
-      case nir.Val.Global(n, ty) =>
-        //globalOffsets.put(n, nextOffset)
-        nextOffset += 8
-      case nir.Val.String(s) =>
-        stringOffsets.put(s, nextOffset)
-        nextOffset += s.length
-    }
-
     def genDefns(defns: Seq[Defn]): Unit = {
-      // 1. Generate constants
       defns.foreach {
         case Defn.Const(_, name, ty, rhs) =>
           genGlobalDefn(name, ty, rhs)
@@ -156,85 +85,89 @@ object ByteCodeGen {
     def genGlobalDefn(name: nir.Global,
                       ty: nir.Type,
                       rhs: nir.Val): Unit = {
-      newline()
-      str("0x")
-      str(globalOffsets.getOrElse(name, throw new Exception("Offset should be in map")).toHexString)
-      str("[")
-      str(BC.sizeof(ty))
-      str("]: ")
+      globalOffsets.put(name, nextOffset)
 
-      str(genVal(rhs))
+      genGlobal(ty, rhs)
+    }
+
+    def genGlobal(ty: nir.Type, v: nir.Val): Unit = {
+      ty match {
+        case nir.Type.Struct(_,tys) => {
+          val nir.Val.Struct(_, vals) = v
+          vals.zip(tys).foreach { case (inv, inty) =>
+            genGlobal(inty, inv)
+          }
+        }
+        case nir.Type.Array(aty,n) => {
+          val nir.Val.Array(_, vs) = v
+          vs.foreach(genGlobal(aty, _))
+        }
+        case _ => genBC(BC.Val(MemoryLayout.sizeOf(ty)), Seq(argFromVal(v)))
+      }
     }
 
     def genFunctionDefn(name: Global,
                         sig: Type,
                         insts: Seq[Inst]): Unit = {
-      val offset = globalOffsets.getOrElse(name, throw new Exception("Function should have been populated"))
-
-      /*
-      line(name)
-      line(sig)
-      insts.foreach(line)
-      */
-
-      newline()
-      str("0x")
-      str(offset.toHexString)
-      str(": ")
+      globalOffsets.put(name, nextOffset)
+      genBC(BC.Function(name), Seq())
 
       // Initialize register allocation
       allocator.clear()
       nextReg = 0
       currentFun = name
+      labelOffsets.put(name, mutable.Map.empty[Local, BC.Offset])
 
-      newline()
       val cfg = CFG(insts)
 
-      insts.foreach(allocateInst)
+      allocateRegisters(insts, cfg)
 
       cfg.foreach { block =>
         genBlock(block)(cfg)
       }
     }
 
+    def allocateRegisters(insts: Seq[Inst], cfg: CFG): Unit = {
+      insts.foreach(allocateInst)
+      funRegisters.put(currentFun, nextReg)
+    }
+
     def allocateInst(inst: Inst):Unit = inst match {
-      case Inst.Let(n, _) =>
-        allocator.put(n, Arg.R(nextReg))
-        nextReg += 1
-      case Inst.Label(_, ps) => ps.foreach { case Val.Local(n, _) =>
-        allocator.put(n, Arg.R(nextReg))
-        nextReg += 1
+      case Inst.Let(n, _) => allocate(n)
+      case Inst.Label(_, ps) => ps.foreach {
+        case Val.Local(n, _) => allocate(n)
       }
       case _ => ()
     }
 
-    def genBlock(block: Block)(implicit cfg: CFG): Unit = {
-      val Block(name, params, insts, isEntry) = block
-
-      genBlockPrologue(block) // TODO Register allocation
-      rep(insts) { inst =>
-        genInst(inst)
-      }
+    def allocate(n: Local): Unit = {
+      allocator.put(n, Arg.R(nextReg))
+      nextReg += 1
     }
 
-    def genBlockPrologue(block: Block)(implicit cfg: CFG): Unit = {
-      val params = block.params
+    def genBlock(block: Block)(implicit cfg: CFG): Unit = {
+      val Block(_, params, insts, isEntry) = block
 
-      // TODO Register allocation
-
-      if (block.isEntry) {
+      // Prologue
+      if (isEntry) {
         params.foreach { p =>
           genBytecode(BC.Pop(BC.convertSize(p.ty)), Seq(p))
         }
+        insts.foreach(genInst)
       } else if (block.isRegular) {
-        params.zipWithIndex.foreach { case (param, id) =>
-          block.inEdges.foreach { case Edge(_, _, Next.Label(_, vals)) =>
-              genBytecode(BC.Mov(BC.convertSize(param.valty)), Seq(param, vals(id)))
+        insts.foreach(genInst)
+        // Epilogue
+        /* TODO
+        if (block.isRegular) {
+          block.outEdges.foreach { case Edge(_, to, Next.Label(_, vals)) =>
+            to.params.zipWithIndex.foreach { case (param, id) =>
+              genBytecode(BC.Mov(BC.convertSize(param.valty)), Seq(param, vals(id))) // TODO check
+            }
           }
         }
+        */
       } else if (block.isExceptionHandler) {
-        ()
-        //unsupported(block)
+        genUnsupported()
       }
     }
 
@@ -242,33 +175,32 @@ object ByteCodeGen {
       case inst: Inst.Let =>
         genLet(inst)
 
-      case Inst.Label(name, params) =>
-        ()
+      case Inst.Label(n, _) =>
+        labelOffsets.update(currentFun, labelOffsets.getOrElse(currentFun, unsupported(currentFun)).updated(n, nextOffset))
 
       case Inst.Unreachable =>
         genBytecode(BC.Crash, Seq())
 
-      case Inst.Ret(value) if BC.convertSize(value.ty) == 0 =>
-        genBytecode(BC.Ret, Seq())
-
       case Inst.Ret(value) =>
-        genBytecode(BC.Push(BC.convertSize(value.ty)), Seq(value))
+        if (isReturnable(value)) {
+          genBytecode(BC.Push(BC.convertSize(value.ty)), Seq(value))
+        }
         genBytecode(BC.Ret, Seq())
 
       case Inst.Jump(next) =>
-        genBC(BC.Jump, Seq(Arg.M(getOffset(next))))
+        genBC(BC.Jump, Seq(getNext(next)))
 
       case Inst.If(cond, thenp, elsep) =>
         genBytecode(BC.UCmp(BC.convertSize(cond.ty)), Seq(Val.True, cond))
-        genBC(BC.Ifne, Seq(Arg.M(getOffset(elsep))))
-        genBC(BC.Jump, Seq(Arg.M(getOffset(thenp))))
+        genBC(BC.Ifne, Seq(getNext(elsep)))
+        genBC(BC.Jump, Seq(getNext(thenp)))
 
       case Inst.Switch(scrut, default, cases) =>
         cases.zipWithIndex.foreach { case (next, id) =>
           genBytecode(BC.UCmp(BC.convertSize(scrut.ty)), Seq(Val.Int(id), scrut)) // TODO types don't match
-          genBC(BC.Ifeq, Seq(Arg.M(getOffset(next))))
+          genBC(BC.Ifeq, Seq(getNext(next)))
         }
-        genBC(BC.Jump, Seq(Arg.M(getOffset(default))))
+        genBC(BC.Jump, Seq(getNext(default)))
 
       case Inst.None =>
         ()
@@ -280,9 +212,6 @@ object ByteCodeGen {
     def genLet(inst: Inst.Let): Unit = {
       val op  = inst.op
       val lhs = Val.Local(inst.name, op.resty)
-
-      allocator.put(inst.name, Arg.R(nextReg))
-      nextReg += 1
 
       op match {
         case call: Op.Call =>
@@ -314,16 +243,16 @@ object ByteCodeGen {
             case Op.Elem(ty, ptr, indexes) =>
               ("scalanative_elem", ty, ptr +: indexes)
 
-            case Op.Extract(aggr, indexes) =>
-              ("scalanative_elem", Type.Void, aggr +: indexes.map(Val.Int(_)))
+            case Op.Extract(aggr, indexes) => //x
+              ???
 
-            case Op.Insert(aggr, value, indexes) =>
-              ("scalanative_insert", Type.Void, aggr +: value +: indexes.map(Val.Int(_)))
+            case Op.Insert(aggr, value, indexes) => //x
+              ???
 
-            case Op.Stackalloc(ty, n) => // TODO probably not
+            case Op.Stackalloc(ty, n) => //x
               ("scalanative_stackalloc", Type.Ptr, Seq(Val.Int(BC.convertSize(ty)), n))
 
-            case Op.Classalloc(name) => // TODO types probably not good
+            case Op.Classalloc(name) =>
               ("scalanative_classalloc", Type.Ptr, Seq(Val.Global(name, Type.Class(name))))
 
             case Op.Field(obj, name) =>
@@ -366,6 +295,11 @@ object ByteCodeGen {
       }
     }
 
+    def getNext(next: Next): Arg = Arg.L(currentFun, next match {
+      case Next.Label(n,_) => n
+      case Next.Case(_,n)  => n
+    })
+
     def genCall(dest: Val.Local, call: Op.Call): Unit = call match {
       case Op.Call(ty, ptr, args, _) =>
         val Type.Function(argtys, retty) = ty
@@ -379,7 +313,9 @@ object ByteCodeGen {
         genBytecode(BC.Call, Seq(ptr))
 
         // 3. recover return value
-        genBytecode(BC.Pop(BC.convertSize(retty)), Seq(dest))
+        if (isReturnable(retty)) {
+          genBytecode(BC.Pop(BC.convertSize(retty)), Seq(dest))
+        }
     }
 
     def genBytecode(op: BC, args: Seq[Val]): Unit = {
@@ -387,16 +323,59 @@ object ByteCodeGen {
     }
 
     def genBC(op: BC, args: Seq[Arg]): Unit = {
-      val opStr = op.toStr
-      line(opStr + " "*(12 - opStr.length) + args.map(_.toStr).mkString(", "))
+      val size = op match {
+        case Bytecode.Val(s)      => s
+        case Bytecode.Function(_) => 0
+        case _                    => 4
+      }
+
+      val padding = if (size > 0) (size - (nextOffset % size)) % size else 0
+      val offset = nextOffset + padding
+      nextOffset += padding + size
+
+      bytecode.append((offset, op, args))
     }
 
-    def getOffset(next: Next): BC.Offset = next match {
-      case Next.Label(name, _) => labelOffsets.getOrElse((currentFun, name), -1)
-      case Next.Case(_, name) => labelOffsets.getOrElse((currentFun, name), -1) // TODO not sure
+    def printBytecode(in: BC.Instr): Unit = {
+      val (offset, op, args) = in
+
+      // Print padding
+      while (nextPrintOffset < offset) {
+        printByte(nextPrintOffset, 0)
+        nextPrintOffset += 1
+      }
+
+      // Print value
+      op match {
+        case BC.Val(s) =>
+          val Seq(arg) = args
+          val str = convertGlobals(arg) match {
+            case Arg.I(n) => f"$n%x"
+            case Arg.F(n) => getDoubleHex(n)
+            case Arg.M(a) => f"$a%x"
+          }
+          str.split("(?<=\\G..)").reverse.take(s.toInt).foreach { cc =>
+            printByte(nextPrintOffset, Integer.parseInt(cc, 16).toByte)
+            nextPrintOffset += 1
+          }
+        case BC.Function(n) =>
+          line("// Function " + n.show + " (" + funRegisters.getOrElse(n, unsupported(n)) + ")")
+        case _ =>
+          val opStr = op.toStr
+          line(offset.toString + ": " + opStr + " "*(12 - opStr.length) + args.map(convertGlobals(_).toStr).mkString(", "))
+          nextPrintOffset += 4
+      }
     }
 
-    def convertVal(iv: nir.Val): Arg = iv match {
+    def getDoubleHex(value: Double): String = {
+      jl.Long.toHexString(jl.Double.doubleToRawLongBits(value))
+    }
+
+    def printByte(offset: BC.Offset, byte: Byte): Unit = {
+      line(offset.toHexString + ": 0x" + "%02x".format(byte))
+    }
+
+    def convertVal(iv: nir.Val): Arg = iv match { // For bytecode arguments
       case Val.True          => Arg.I(1)
       case Val.False         => Arg.I(0)
       case Val.Zero(_)       => Arg.I(0)
@@ -405,50 +384,56 @@ object ByteCodeGen {
       case Val.Short(v)      => Arg.I(v)
       case Val.Int(v)        => Arg.I(v)
       case Val.Long(v)       => Arg.I(v)
-      case Val.Float(v)      => Arg.I(v)
-      case Val.Double(v)     => Arg.I(v)
+      case Val.Float(v)      => Arg.F(v)
+      case Val.Double(v)     => Arg.F(v)
       case Val.Unit          => Arg.None // TODO
       case Val.None          => Arg.None // TODO
-      case Val.String(s)     =>
-        val addr: BC.Offset = stringOffsets.getOrElse(s, -1)
-        Arg.I(addr)
-      case Val.Local(n, ty)  => getLocal(n)
-      case Val.Global(n, ty) => getGlobal(n)
+      case Val.String(s)     => Arg.S(s)
+      case Val.Local(n, _)   =>
+        allocator.getOrElse(n, unsupported(n))
+      case Val.Global(n, _)  => Arg.G(n)
       case _                 => unsupported(iv)
     }
 
-    def genVal(v: Val): String = v match { // TODO goes off once the data section is fully implemented
-      case Val.True          => "1"
-      case Val.False         => "0"
-      case Val.Zero(ty)      => "0 [" + ty + "]"
-      case Val.Undef(ty)     => "0 [" + ty + "]"
-      case Val.Byte(v)       => v.toString
-      case Val.Short(v)      => v.toString
-      case Val.Int(v)        => v.toString
-      case Val.Long(v)       => v.toString
-      case Val.Float(v)      => v.toString
-      case Val.Double(v)     => v.toString
-      case Val.String(s)     => "\"" + s + "\""
-      case Val.Struct(_, vs) => "{ " + vs.map(genVal).mkString(", ") + " }"
-      case Val.Array(_, vs)  => "[ " + vs.map(genVal).mkString(", ") + " ]"
-      case Val.Chars(v)      => "c\"" + v + "\\00\""
-      case Val.Global(n, ty) => "M[" + globalOffsets.getOrElse(n, unsupported(n)).toHexString + "]"
-      case _                 => unsupported(v)
-    }
-
-    def getGlobal(g: Global): Arg = {
-      globalOffsets.get(g) match {
-        case Some(offset) => Arg.M(offset)
-        case None         => Arg.G(g)
+    def convertGlobals(arg: Arg): Arg = arg match {
+      case Arg.G(n)    => globalOffsets.get(n) match {
+        case Some(o) => Arg.M(o)
+        case None    => Arg.G(n)
       }
-    }
-
-    def getLocal(local: Local): Arg = {
-      allocator.getOrElse(local, unsupported(local))
+      case Arg.S(s)    => Arg.M(stringOffsets.getOrElse(s, { println("s " + s); -1} /* unsupported(s) */))
+      case Arg.L(f, n) => labelOffsets.getOrElse(f, unsupported(f)).get(n) match {
+        case Some(l) => Arg.M(l)
+        case None    => Arg.L(f,n)
+      }
+      case _           => arg
     }
 
     def genUnsupported(): Unit = {
       Seq(genBytecode(BC.Crash, Seq()))
+    }
+
+    def isReturnable(v: nir.Val): Boolean = !(v == nir.Val.None || v == nir.Val.Unit)
+    def isReturnable(t: nir.Type): Boolean = BC.convertSize(t) > 0
+
+    def argFromVal(v: nir.Val): Arg = v match { // For data section values
+      case Val.True          => Arg.I(1)
+      case Val.False         => Arg.I(0)
+      case Val.Zero(ty)      => Arg.I(0)
+      case Val.Undef(ty)     => Arg.I(0)
+      case Val.Byte(v)       => Arg.I(v)
+      case Val.Short(v)      => Arg.I(v)
+      case Val.Int(v)        => Arg.I(v)
+      case Val.Long(v)       => Arg.I(v)
+      case Val.Float(v)      => Arg.F(v)
+      case Val.Double(v)     => Arg.F(v)
+      case Val.String(s)     =>
+        stringOffsets.put(s, nextOffset)
+        Arg.S(s)
+      //case Val.Chars(v)      => "c\"" + v + "\\00\""
+      // TODO Chars or String or both?
+      case Val.Global(n, _)  =>
+        Arg.G(n)
+      case _                 => unsupported(v)
     }
   }
 }

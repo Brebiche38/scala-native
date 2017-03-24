@@ -9,7 +9,15 @@ sealed abstract class Bytecode {
 
 object Bytecode {
   type Offset = Long
-  type Instr = (Bytecode, Seq[Arg])
+  type Instr = (Offset, Bytecode, Seq[Arg])
+
+  final case class Val(size: Long) extends Bytecode {
+    override def toStr: String = ""
+  }
+
+  final case class Function(name: nir.Global) extends Bytecode {
+    override def toStr: String = name.show
+  }
 
   final case class Mov(size: Int) extends Bytecode {
     override def toStr: String = super.toStr + "." + size.toString
