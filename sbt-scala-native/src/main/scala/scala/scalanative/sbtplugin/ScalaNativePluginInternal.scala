@@ -183,7 +183,7 @@ object ScalaNativePluginInternal {
         }
         .getOrElse(fail)
     },
-    nativeMode := "interpreted",
+    nativeMode := "interactive",
     artifactPath in nativeLink := {
       crossTarget.value / (moduleName.value + "-out")
     },
@@ -488,10 +488,10 @@ object ScalaNativePluginInternal {
   private def mode(mode: String) = mode match {
     case "debug"       => tools.Mode.Debug
     case "release"     => tools.Mode.Release
-    case "interpreted" => tools.Mode.Interpreted
+    case "interactive" => tools.Mode.Interactive
     case value =>
       throw new MessageOnlyException(
-        "nativeMode can be either \"debug\", \"release\" or \"interpreted\", not: " + value)
+        "nativeMode can be either \"debug\", \"release\" or \"interactive\", not: " + value)
   }
 
   private def garbageCollector(gc: String) = gc match {

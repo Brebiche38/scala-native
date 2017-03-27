@@ -59,7 +59,7 @@ package object tools {
 
   /** Given low-level assembly, emit LLVM IR for it to the buildDirectory. */
   def codegen(config: Config, assembly: Seq[nir.Defn]): Unit = config.mode match {
-    case Mode.Interpreted => scalanative.nbc.ByteCodeGen(config, assembly)
+    case Mode.Interactive => scalanative.nbc.ByteCodeGen(config, assembly)
     case _                => scalanative.codegen.CodeGen(config, assembly)
   }
 }

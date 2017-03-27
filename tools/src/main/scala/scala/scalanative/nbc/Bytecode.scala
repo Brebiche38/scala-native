@@ -147,8 +147,11 @@ object Bytecode {
   final case object Iflt extends CF
   final case object Ifle extends CF
   final case object Call extends CF
+  final case class Builtin(id: Int) extends CF {
+    override def toStr: String = super.toStr + "." + id.toString
+  }
   final case object Ret extends CF
-  final case object Crash extends CF
+  final case object Halt extends CF
 
   sealed abstract class Stack(val size: Int) extends Bytecode {
     override def toStr: String = super.toStr + "." + size.toString

@@ -70,10 +70,10 @@ object Driver {
     val optPasses = config.mode match {
       case Mode.Debug       => fastOptPasses
       case Mode.Release     => fullOptPasses
-      case Mode.Interpreted => Seq()
+      case Mode.Interactive => Seq()
     }
     val finalPasses = config.mode match {
-      case Mode.Interpreted => Seq()
+      case Mode.Interactive => Seq()
       case _                => loweringPasses
     }
     new Impl(injectionPasses ++ optPasses ++ finalPasses)

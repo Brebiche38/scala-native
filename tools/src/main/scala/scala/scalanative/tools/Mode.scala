@@ -5,5 +5,5 @@ sealed abstract class Mode
 object Mode {
   final case object Debug       extends Mode
   final case object Release     extends Mode
-  final case object Interpreted extends Mode
+  final case object Interactive extends Mode
 }
