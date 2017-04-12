@@ -65,6 +65,25 @@ object Driver {
     // pass.SafepointInsertion
   )
 
+  private val interactivePasses = Seq(
+//    pass.DynmethodLowering,
+//    pass.ExternHoisting
+    pass.ModuleLowering, // TODO big...
+    pass.TypeValueLowering, // TODO embed in ByteCodeGen
+//    pass.BoxingLowering,
+//    pass.AsLowering,
+//    pass.IsLowering,
+//    pass.MethodLowering,
+//    pass.TraitLowering,
+//    pass.ClassLowering,
+    pass.StringLowering, // TODO embed?
+    pass.ConstLowering // linked to String
+//    pass.UnitLowering
+//    pass.NothingLowering
+//    pass.AllocLowering,
+//    pass.SizeofLowering
+  )
+
   /** Create driver with default pipeline for this configuration. */
   def apply(config: tools.Config): Driver = {
     val optPasses = config.mode match {
@@ -73,7 +92,7 @@ object Driver {
       case Mode.Interactive => Seq()
     }
     val finalPasses = config.mode match {
-      case Mode.Interactive => Seq()
+      case Mode.Interactive => interactivePasses
       case _                => loweringPasses
     }
     new Impl(injectionPasses ++ optPasses ++ finalPasses)

@@ -3,33 +3,19 @@ package nbc
 
 sealed abstract class Arg {
   val toStr: String
+
+  def isImm: Boolean = this match {
+    case Arg.R(_) => false
+    case Arg.I(_) => true
+    case Arg.F(_) => true
+    case Arg.M(_) => true
+  }
+
+  def imm: Int = if (isImm) 1 else 0
 }
 object Arg {
-  sealed abstract class Reg extends Arg
-
-  /*
-  // Special purpose registers
-
-  // Program counter
-  case object RPC extends Reg {
-    val toStr = "rPC"
-  }
-  // Stack pointer
-  case object RSP extends Reg {
-    val toStr = "rSP"
-  }
-  // Link register
-  case object RL extends Reg {
-    val toStr = "rL"
-  }
-  // Flags register
-  case object RF extends Reg {
-    val toStr = "rF"
-  }
-  */
-
   // Register
-  case class R(id: Int) extends Reg {
+  case class R(id: Int) extends Arg {
     val toStr = "r" + id.toString
   }
 
@@ -44,7 +30,7 @@ object Arg {
   }
 
   // Memory location
-  case class M(addr: Bytecode.Offset) extends Arg {
+  case class M(addr: Opcode.Offset) extends Arg {
     val toStr = "0x" + addr.toHexString
   }
 
@@ -54,14 +40,18 @@ object Arg {
   }
 
   // High-level, have to go before output
+
+  // Global value
   case class G(name: nir.Global) extends Arg {
     val toStr = name.show
   }
 
+  // In-function label
   case class L(label: nir.Local) extends Arg {
     val toStr = label.show
   }
 
+  // String literal
   case class S(str: String) extends Arg {
     val toStr = str
   }
