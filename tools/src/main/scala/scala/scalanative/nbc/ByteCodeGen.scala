@@ -342,11 +342,6 @@ object ByteCodeGen {
             }
           }
 
-        /*
-        case Op.Copy(v) =>
-          genBytecode(Mov(convertSize(v.ty)), Seq(lhs, v))
-        */
-
         case Op.Sizeof(ty) =>
           val size = MemoryLayout.sizeOf(ty)
           genBytecode(Mov(64), Seq(lhs, Val.Long(size)))
@@ -354,69 +349,45 @@ object ByteCodeGen {
         case Op.As(ty, obj) =>
           genBytecode(Mov(convertSize(ty)), Seq(lhs, obj))
 
-        /* TODO debug Refs (no!)
-        case Op.Field(obj, FieldRef(cls: Class, fld)) =>
-          val classty = cls.classStruct
-          genLet(Inst.Let(inst.name, Op.Elem(classty, obj, Seq(Val.Int(0), Val.Int(fld.index + 1)))))
-        */
-
         case _ => {
           val (builtinId, retty, args): (Int, Type, Seq[Val]) = op match {
             case Op.Classalloc(name) => // needed
-              (1, Type.Ptr, Seq())
-
-            /* Probably how to do it
-            case Op.Classalloc(ClassRef(cls)) => // needed
-              val size = MemoryLayout.sizeOf(cls.classStruct)
-              (2, Type.Ptr, Seq(Val.Long(size), cls.typeConst))
-            */
+              (1, Type.Ptr, Seq(Val.Global(Global.Member(name, "type"), Type.Ptr)))
 
             case Op.Method(obj, name) => // needed
-              (2, Type.Ptr, Seq())
+              (2, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO method ID
 
-
-            case Op.Module(name, unwind) => // needed
-              (3, Type.Ptr, Val.Global(name, Type.Ptr) +: (unwind match {
-                case Next.None => Seq()
-                case _         => Seq() //(Val.Local(unwind.name, Type.Ptr))
-              }))
-
-            case Op.As(ty, obj) => // needed // TODO
-              (4, Type.Ptr, Seq())
-
-            case Op.Is(ty, obj) => // needed // TODO
-              (5, Type.Bool, Seq())
-
-            /*
-            case Op.Box(ty, obj) => // needed // TODO
-              (6, Type.Ptr, Seq())
-
-            case Op.Unbox(ty, obj) => // needed // TODO
-              (7, Type.Ptr, Seq())
-            */
+            case Op.Is(ty, obj) => ty match {
+              case Type.Class(name) =>
+                (3, Type.Bool, Seq(obj, Val.Global(Global.Member(name, "type"), ty)))
+              case Type.Trait(name) =>
+                (4, Type.Bool, Seq(obj, Val.Global(Global.Member(name, "type"), ty)))
+            }
 
             case Op.Field(obj, name) => // needed // TODO
-              (8, Type.Ptr, Seq())
+              (5, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO field ID
 
             /*
             // Not needed for hello world
-            case Op.Dynmethod(obj, signature) => ???
-              (5, Type.Ptr, Seq(obj, Val.String(signature)))
-
             case Op.Select(cond, thenv, elsev) =>
-            case Op.Copy(value) => // should be implemented once lowerings are used
-            case Op.Closure(ty, fun, captures) =>
+            case Op.Copy(value) =>
             case Op.Throw(value, unwind) =>
 
+            // Currently lowered
+            case Op.Dynmethod(obj, signature) =>
+            case Op.Module(?) =>
+            case Op.Box(ty, obj) =>
+            case Op.Unbox(ty, obj) =>
+
             // Not needed for any program
-            Op.Extract, Op.Insert (no occurence through CStruct)
+            Op.Extract, Op.Insert, Op.Closure (no occurence through CStruct)
             */
 
             case _ =>
               unsupported(op)
           }
           args.foreach { arg =>
-            genBytecode(Push(64), Seq(arg))
+            genBytecode(Push(convertSize(arg.ty)), Seq(arg))
           }
           genBC(Builtin(builtinId), Seq())
           if (isReturnable(retty)) {
@@ -436,7 +407,6 @@ object ByteCodeGen {
         val Type.Function(argtys, retty) = ty
 
         // 1. Push arguments
-        // TODO handle varargs
         args.zip(argtys).reverse.foreach {
           case (arg, ty) if isReturnable(ty) =>
             // TODO check if arg.ty is ty (to be sure)
@@ -555,12 +525,7 @@ object ByteCodeGen {
       case Val.Long(v)       => Arg.I(v)
       case Val.Float(v)      => Arg.F(v)
       case Val.Double(v)     => Arg.F(v)
-      //case Val.Unit          => Arg.G(Global.Top("scala.scalanative.runtime.BoxedUnit$"))
-      //case Val.Unit          => Arg.None // TODO
       case Val.Unit          => Arg.I(0) // TODO temporary
-      //case Val.None          => Arg.None // TODO
-      case Val.String(s)     => Arg.S(s)
-      case Val.Chars(c)      => Arg.S(c)
       case Val.Local(n, _)   =>
         allocator.getOrElse(n, Arg.R(-1) /*unsupported(n)*/ )
       case Val.Global(n, _)  => Arg.G(n)
@@ -575,7 +540,6 @@ object ByteCodeGen {
           Arg.G(n)
         //unsupported(n)
       }
-      case Arg.S(s)    => Arg.M(stringOffsets.getOrElse(s, { println("s " + s); -1} /* unsupported(s) */))
       case _           => arg
     }
 
@@ -589,17 +553,14 @@ object ByteCodeGen {
     def argFromVal(v: nir.Val): Arg = v match { // For data section values
       case Val.True          => Arg.I(1)
       case Val.False         => Arg.I(0)
-      case Val.Zero(ty)      => Arg.I(0)
-      case Val.Undef(ty)     => Arg.I(0)
+      case Val.Zero(_)       => Arg.I(0)
+      case Val.Undef(_)      => Arg.I(0)
       case Val.Byte(v)       => Arg.I(v)
       case Val.Short(v)      => Arg.I(v)
       case Val.Int(v)        => Arg.I(v)
       case Val.Long(v)       => Arg.I(v)
       case Val.Float(v)      => Arg.F(v)
       case Val.Double(v)     => Arg.F(v)
-      case Val.String(s)     =>
-        stringOffsets.put(s, nextOffset)
-        Arg.S(s)
       case Val.Global(n, _)  =>
         Arg.G(n)
       case _                 => unsupported(v)
