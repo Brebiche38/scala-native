@@ -143,6 +143,7 @@ object ScalaNativePluginInternal {
         (mode(nativeMode.value) match {
           case tools.Mode.Debug   => "-O0"
           case tools.Mode.Release => "-O2"
+          case tools.Mode.Interactive => ""
         })
     },
     nativeLinkingOptions := {

@@ -6,7 +6,7 @@ import java.nio.ByteBuffer
 import java.nio.file.Paths
 
 import scala.collection.mutable
-import scala.scalanative.util.{ShowBuilder, unsupported}
+import scala.scalanative.util.{Scope, ShowBuilder, unsupported}
 import scala.scalanative.io.{VirtualDirectory, withScratchBuffer}
 import scala.scalanative.optimizer.analysis.ControlFlow.{Block, Edge, Graph => CFG}
 import scala.scalanative.nir._
@@ -19,25 +19,25 @@ import scala.scalanative.optimizer.analysis.MemoryLayout
 object ByteCodeGen {
 
   /** Generate code for given assembly. */
-  def apply(config: tools.Config, assembly: Seq[Defn]): Unit = {
+  def apply(config: tools.Config, assembly: Seq[Defn]): Unit = Scope { implicit in =>
     val env = assembly.map(defn => defn.name -> defn).toMap
+    val workdir = VirtualDirectory.real(config.workdir)
 
     withScratchBuffer { buffer =>
       val defns    = assembly
-      val impl     = new Impl(config.target, env, defns, config.targetDirectory, buffer)
+      val impl     = new Impl(config.target, env, defns, buffer)
       //val codepath = "code.nbc"
       //val datapath = "data.nbc"
       val path     = "bin.nbc"
       impl.gen()
       buffer.flip
-      config.targetDirectory.write(Paths.get(path), buffer)
+      workdir.write(Paths.get(path), buffer)
     }
   }
 
   private final class Impl(target: String,
                            env: Map[Global, Defn],
                            defns: Seq[Defn],
-                           targetDirectory: VirtualDirectory,
                            buffer: ByteBuffer) {
     //val builder         = new ShowBuilder
 
@@ -517,17 +517,17 @@ object ByteCodeGen {
     def convertVal(iv: nir.Val)(implicit allocator: Allocator): Arg = iv match { // For bytecode arguments
       case Val.True          => Arg.I(1)
       case Val.False         => Arg.I(0)
-      case Val.Zero(_)       => Arg.I(0)
-      case Val.Undef(_)      => Arg.I(0)
+      case Val.Zero(_)       => Arg.I(0) // TODO only zero[java.lang.Object] in comparisons...
+      case Val.Undef(_)      => Arg.I(0) // Kept for passing unused function parameters
       case Val.Byte(v)       => Arg.I(v)
       case Val.Short(v)      => Arg.I(v)
       case Val.Int(v)        => Arg.I(v)
       case Val.Long(v)       => Arg.I(v)
       case Val.Float(v)      => Arg.F(v)
       case Val.Double(v)     => Arg.F(v)
-      case Val.Unit          => Arg.I(0) // TODO temporary
+      case Val.Unit          => Arg.I(0) // TODO only in java.lang.AbstractStringBuilder::init
       case Val.Local(n, _)   =>
-        allocator.getOrElse(n, Arg.R(-1) /*unsupported(n)*/ )
+        allocator.getOrElse(n, Arg.R(-1) ) // R(-1) needed for unused function parameters
       case Val.Global(n, _)  => Arg.G(n)
       case _                 => unsupported(iv)
     }
@@ -553,8 +553,7 @@ object ByteCodeGen {
     def argFromVal(v: nir.Val): Arg = v match { // For data section values
       case Val.True          => Arg.I(1)
       case Val.False         => Arg.I(0)
-      case Val.Zero(_)       => Arg.I(0)
-      case Val.Undef(_)      => Arg.I(0)
+      case Val.Zero(ty)      => Arg.I(0) // TODO this is probably more complex
       case Val.Byte(v)       => Arg.I(v)
       case Val.Short(v)      => Arg.I(v)
       case Val.Int(v)        => Arg.I(v)
