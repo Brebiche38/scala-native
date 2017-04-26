@@ -35,17 +35,19 @@ object Opcode {
   }
 
   def packImm(arg: Arg, s: Int): Seq[Byte] = arg match {
-    case Arg.M(a) if s == 64 => packImmI(a, 64)
-    case Arg.I(v)            => packImmI(v, s)
-    case Arg.F(v)            => packImmF(v, s)
-    case Arg.G(g)            => println(g.show); packImmI(0, s)
+    case Arg.M(a) if s == 8 => packImmI(a, s)
+    case Arg.I(v)           => packImmI(v, s)
+    case Arg.F(v)           => packImmF(v, s)
+    case Arg.G(g)           => println(g.show); packImmI(0, s)
   }
-  def packImmI(i: Long, s: Int): Seq[Byte] =
-    BigInt(i).toByteArray.takeRight(s/8)
+  def packImmI(i: Long, s: Int): Seq[Byte] = {
+    val arr = BigInt(i).toByteArray.takeRight(s)
+    if (arr.length < s) Array.fill(s - arr.length)( 0x00.toByte ) ++ arr else arr
+  }
 
   def packImmF(i: Double, s: Int): Seq[Byte] = s match {
-    case 32 => packImmI(java.lang.Float.floatToRawIntBits(i.toFloat).toLong, s)
-    case 64 => packImmI(java.lang.Double.doubleToRawLongBits(i), s)
+    case 4 => packImmI(java.lang.Float.floatToRawIntBits(i.toFloat).toLong, s)
+    case 8 => packImmI(java.lang.Double.doubleToRawLongBits(i), s)
   }
 
   final case class Data(size: Long) extends Opcode {
@@ -53,7 +55,7 @@ object Opcode {
     override def toBin(args: Seq[Arg]) = args match {
       case Seq(arg) => packImm(arg, (size*8).toInt)
     }
-    override def immSize = size.toInt
+    override def immSize = size.toInt / 8
   }
 
   // Not in the final code (only for debug purposes
@@ -79,10 +81,10 @@ object Opcode {
           (packSize(size), 4),
           (r1, 4),
           (0x8, 4)
-        )) ++ packImm(arg2, size)
+        )) ++ packImm(arg2, size/8)
     }
 
-    override def immSize = size
+    override def immSize = size / 8
   }
 
   sealed abstract class Arith(val size: Int) extends Opcode {
@@ -104,9 +106,9 @@ object Opcode {
           (packSize(size), 2),
           (r1, 3),
           (0x8, 4)
-        )) ++ packImm(arg2, size)
+        )) ++ packImm(arg2, size/8)
     }
-    override def immSize = size
+    override def immSize = size / 8
   }
 
   final case class Add(override val size: Int) extends Arith(size) {
@@ -207,7 +209,7 @@ object Opcode {
           (packSize(size), 2),
           (r1, 4),
           (0x8, 4)
-        )) ++ packImm(arg2, size)
+        )) ++ packImm(arg2, size/8)
       case Seq(arg1, Arg.R(r2)) =>
         pack(Seq(
           (0x3, 4),
@@ -215,7 +217,7 @@ object Opcode {
           (packSize(size), 2),
           (0x8, 4),
           (r2, 4)
-        )) ++ packImm(arg1, size)
+        )) ++ packImm(arg1, size/8)
       case Seq(arg1, arg2) =>
         pack(Seq(
           (0x3, 4),
@@ -223,9 +225,9 @@ object Opcode {
           (packSize(size), 2),
           (0x8, 4),
           (0x8, 4)
-        )) ++ packImm(arg1, size) ++ packImm(arg2, size)
+        )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
     }
-    override def immSize = size
+    override def immSize = size / 8
   }
   final case class SCmp(override val size: Int) extends Comp(size) {
     override def opcode = 0x0
@@ -311,10 +313,10 @@ object Opcode {
           (packSize(after), 2),
           (r1, 3),
           (0x8, 4)
-        )) ++ packImm(arg2, before)
+        )) ++ packImm(arg2, before/8)
     }
 
-    override def immSize: Int = before
+    override def immSize: Int = before / 8
   }
   final case class Trunc(override val before: Int, override val after: Int) extends Conv(before, after) {
     override def opcode = 0x0
@@ -379,10 +381,10 @@ object Opcode {
           (opcode, 4),
           (0x0, 4), // Padding
           (0x8, 4)
-        )) ++ packImmI(a, 64)
+        )) ++ packImmI(a, 8)
       case _ => Seq()
     }
-    override def immSize: Int = 64
+    override def immSize: Int = 8
   }
   final case object Jump extends CF {
     override def opcode = 0x1
@@ -455,10 +457,10 @@ object Opcode {
           (packSize(size), 2),
           (0x0, 4), // Padding
           (0x8, 4)
-        )) ++ packImm(arg, size)
+        )) ++ packImm(arg, size/8)
     }
 
-    override def immSize: Int = size
+    override def immSize: Int = size / 8
   }
   final case class Push(override val size: Int) extends Stack(size) {
     override def opcode = 0x0
@@ -481,7 +483,7 @@ object Opcode {
           (0x8, 4)
         )) ++ packImmI(v2, immSize) // Limit to shorts for now
     }
-    override def immSize: Int = 16
+    override def immSize: Int = 2
   }
 
   sealed abstract class Memory(val size: Int) extends Opcode {
@@ -506,7 +508,7 @@ object Opcode {
           (packSize(size), 2),
           (r1, 4),
           (0x8, 4)
-        )) ++ packImm(arg2, size)
+        )) ++ packImm(arg2, size/8)
       case Seq(Arg.M(a1), Arg.R(r2)) =>
         pack(Seq(
           (0x2, 4),
@@ -514,7 +516,7 @@ object Opcode {
           (packSize(size), 2),
           (0x8, 4),
           (r2, 4)
-        )) ++ packImmI(a1, 64)
+        )) ++ packImmI(a1, 8)
       case Seq(Arg.M(a1), arg2) =>
         pack(Seq(
           (0x2, 4),
@@ -522,9 +524,9 @@ object Opcode {
           (packSize(size), 2),
           (0x8, 4),
           (0x8, 4)
-        )) ++ packImmI(a1, 64) ++ packImm(arg2, size)
+        )) ++ packImmI(a1, 8) ++ packImm(arg2, size/8)
     }
-    override def immSize: Int = 64
+    override def immSize: Int = 8
   }
   final case class Load(override val size: Int) extends Memory(size) {
     override def opcode = 0x1
@@ -544,9 +546,9 @@ object Opcode {
           (packSize(size), 2),
           (r1, 4),
           (0x8, 4)
-        )) ++ packImm(arg2, 64)
+        )) ++ packImm(arg2, 8)
     }
-    override def immSize: Int = 64
+    override def immSize: Int = 8
   }
 
   final case object Nop extends Opcode {

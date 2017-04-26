@@ -70,7 +70,7 @@ object Driver {
 //    pass.ExternHoisting
     pass.ModuleLowering, // TODO big...
     pass.TypeValueLowering, // TODO embed in ByteCodeGen
-//    pass.BoxingLowering,
+    pass.BoxingLowering,
 //    pass.AsLowering,
 //    pass.IsLowering,
 //    pass.MethodLowering,

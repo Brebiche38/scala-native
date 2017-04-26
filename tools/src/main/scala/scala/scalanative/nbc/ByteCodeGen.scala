@@ -351,13 +351,15 @@ object ByteCodeGen {
           val size = MemoryLayout.sizeOf(ty)
           genBytecode(Mov(64), Seq(lhs, Val.Long(size)))
 
-        /* TODO debug Refs
+        case Op.As(ty, obj) =>
+          genBytecode(Mov(convertSize(ty)), Seq(lhs, obj))
+
+        /* TODO debug Refs (no!)
         case Op.Field(obj, FieldRef(cls: Class, fld)) =>
           val classty = cls.classStruct
           genLet(Inst.Let(inst.name, Op.Elem(classty, obj, Seq(Val.Int(0), Val.Int(fld.index + 1)))))
         */
 
-        // TODO types don't match
         case _ => {
           val (builtinId, retty, args): (Int, Type, Seq[Val]) = op match {
             case Op.Classalloc(name) => // needed
@@ -383,13 +385,15 @@ object ByteCodeGen {
               (4, Type.Ptr, Seq())
 
             case Op.Is(ty, obj) => // needed // TODO
-              (5, Type.Ptr, Seq())
+              (5, Type.Bool, Seq())
 
+            /*
             case Op.Box(ty, obj) => // needed // TODO
               (6, Type.Ptr, Seq())
 
             case Op.Unbox(ty, obj) => // needed // TODO
               (7, Type.Ptr, Seq())
+            */
 
             case Op.Field(obj, name) => // needed // TODO
               (8, Type.Ptr, Seq())
@@ -460,24 +464,26 @@ object ByteCodeGen {
       }.sum
 
       val size = op match {
-        case Data(s)         => s
+        case Data(s)         => s/8
         case Function(_)     => 0
         case Store(s)        => 2 + (args match {
           case Seq(arg1, arg2) =>
             val imm1 = arg1 match {
               case Arg.R(_) => 0
-              case _        => 64
+              case _        => 8
             }
             val imm2 = arg2 match {
               case Arg.R(_) => 0
-              case _        => s
+              case _        => s/8
             }
             imm1 + imm2
         })
         case _ => 2 + immCount * op.immSize
       }
 
-      val padding = if (size > 0) (size - (nextOffset % size)) % size else 0
+      // TODO padding for data
+      //val padding = if (size > 0) (size - (nextOffset % size)) % size else 0
+      val padding = 0
       val offset = nextOffset + padding
       nextOffset += padding + size
 
@@ -487,7 +493,7 @@ object ByteCodeGen {
     def genBinary(in: Instr): Unit = {
       val (offset, op, args) = in
       while(bytesPut < offset) {
-        buffer.put(0x0.toByte)
+        buffer.put(0xde.toByte)
         bytesPut += 1
       }
 
