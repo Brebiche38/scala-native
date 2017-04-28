@@ -42,6 +42,27 @@ object ClassHierarchy {
     var traits: Seq[Trait]      = _
     var alltraits: Seq[Trait]   = _
     var allmethods: Seq[Method] = _
+
+    val methodStruct = Type.Struct(Global.None, Seq(Type.Int, /*Type.Ptr,*/ Type.Ptr))
+    def methodsArray: Type.Array =
+      Type.Array(methodStruct, allmethods.length)
+    def methodsValue: Val.Array =
+      Val.Array(methodStruct, allmethods.map { meth =>
+        Val.Struct(Global.None, Seq(Val.Int(meth.id), /*Val.Global(meth.name, meth.ty),*/ meth.value))
+      })
+
+    def typeStruct: Type.Struct =
+      Type.Struct(Global.None,
+        Seq(Type.Int,
+          Type.Ptr,
+          Type.Long,
+          methodsArray))
+    def typeValue: Val.Struct =
+      Val.Struct(Global.None,
+        Seq(Val.Int(id),
+          Val.String(name.id),
+          Val.Long(-1),
+          methodsValue))
   }
 
   final class Class(val attrs: Attrs,
@@ -86,7 +107,7 @@ object ClassHierarchy {
       Type.Array(fieldStruct, allfields.length)
     def fieldsValue: Val.Array =
       Val.Array(fieldStruct, fieldsWithLayout.map {
-        case (fld: Field, offset) =>
+        case (fld, offset) =>
           Val.Struct(Global.None, Seq(Val.Int(fld.id), /*Val.Global(fld.name, fld.ty),*/ Val.Long(offset))) // TODO Var is removed in ClassLowering
       })
 
@@ -94,9 +115,8 @@ object ClassHierarchy {
     def methodsArray: Type.Array =
       Type.Array(methodStruct, allmethods.length)
     def methodsValue: Val.Array =
-      Val.Array(methodStruct, allmethods.map {
-        case meth: Method =>
-          Val.Struct(Global.None, Seq(Val.Int(meth.id), /*Val.Global(meth.name, meth.ty),*/ meth.value))
+      Val.Array(methodStruct, allmethods.map { meth =>
+        Val.Struct(Global.None, Seq(Val.Int(meth.id), /*Val.Global(meth.name, meth.ty),*/ meth.value))
       })
 
     def typeStruct: Type.Struct =

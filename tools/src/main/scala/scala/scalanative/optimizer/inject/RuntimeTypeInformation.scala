@@ -17,6 +17,13 @@ class RuntimeTypeInformation(implicit top: Top, fresh: Fresh) extends Inject {
     buf += typeDefn
   }
 
+  def injectTraitType(buf: Buffer[Defn], trt: Trait): Unit = {
+    val typeDefn =
+      Defn.Const(Attrs.None, trt.typeName, trt.typeStruct, trt.typeValue)
+
+    buf += typeDefn
+  }
+
   def injectType(buf: Buffer[Defn], node: Scope): Unit = {
     val typeId   = Val.Int(node.id)
     val typeStr  = Val.String(node.name.id)
@@ -29,7 +36,7 @@ class RuntimeTypeInformation(implicit top: Top, fresh: Fresh) extends Inject {
 
   override def apply(buf: Buffer[Defn]) = {
     top.classes.foreach(injectClassType(buf, _))
-    top.traits.foreach(injectType(buf, _))
+    top.traits.foreach(injectTraitType(buf, _))
     top.structs.foreach(injectType(buf, _))
   }
 }
