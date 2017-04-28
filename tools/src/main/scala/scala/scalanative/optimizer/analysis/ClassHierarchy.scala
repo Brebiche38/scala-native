@@ -76,20 +76,47 @@ object ClassHierarchy {
     def dynDispatchTableStruct =
       Type.Struct(Global.None, Seq(Type.Int, Type.Ptr, Type.Ptr, Type.Ptr))
     def size: Long = MemoryLayout(Type.Ptr +: allfields.map(_.ty)).size
+
+    def fieldsLayout = MemoryLayout(allfields.map(_.ty))
+    def fieldsWithLayout = allfields.zip(fieldsLayout.tys.collect {
+      case MemoryLayout.Tpe(_, offset, _) => offset
+    })
+    val fieldStruct = Type.Struct(Global.None, Seq(Type.Int, /*Type.Ptr,*/ Type.Long))
+    def fieldsArray: Type.Array =
+      Type.Array(fieldStruct, allfields.length)
+    def fieldsValue: Val.Array =
+      Val.Array(fieldStruct, fieldsWithLayout.map {
+        case (fld: Field, offset) =>
+          Val.Struct(Global.None, Seq(Val.Int(fld.id), /*Val.Global(fld.name, fld.ty),*/ Val.Long(offset))) // TODO Var is removed in ClassLowering
+      })
+
+    val methodStruct = Type.Struct(Global.None, Seq(Type.Int, /*Type.Ptr,*/ Type.Ptr))
+    def methodsArray: Type.Array =
+      Type.Array(methodStruct, allmethods.length)
+    def methodsValue: Val.Array =
+      Val.Array(methodStruct, allmethods.map {
+        case meth: Method =>
+          Val.Struct(Global.None, Seq(Val.Int(meth.id), /*Val.Global(meth.name, meth.ty),*/ meth.value))
+      })
+
     def typeStruct: Type.Struct =
       Type.Struct(Global.None,
                   Seq(Type.Int,
                       Type.Ptr,
                       Type.Long,
                       dynDispatchTableStruct,
-                      vtableStruct))
+                      vtableStruct,
+                      fieldsArray,
+                      methodsArray))
     def typeValue: Val.Struct =
       Val.Struct(Global.None,
                  Seq(Val.Int(id),
                      Val.String(name.id),
                      Val.Long(size),
                      dynDispatchTableValue,
-                     vtableValue))
+                     vtableValue,
+                     fieldsValue,
+                     methodsValue))
     def typeConst: Val =
       Val.Global(name member "type", Type.Ptr)
     def classStruct: Type.Struct = {
