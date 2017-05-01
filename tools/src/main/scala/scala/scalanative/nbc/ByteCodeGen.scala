@@ -338,7 +338,7 @@ object ByteCodeGen {
             genBytecode(Mov(64), Seq(lhs, Val.Long(size)))
             genBytecode(Mul(64), Seq(lhs, indexes.head))
             if (inOffset != 0) {
-              genBytecode(Add(64), Seq(lhs, Val.Long(inOffset))) // TODO violates the no immediate binary policy
+              genBytecode(Add(64), Seq(lhs, Val.Long(inOffset)))
             }
           }
 
@@ -354,18 +354,18 @@ object ByteCodeGen {
             case Op.Classalloc(name) => // needed
               (1, Type.Ptr, Seq(Val.Global(Global.Member(name, "type"), Type.Ptr)))
 
+            case Op.Field(obj, name) => // needed // TODO
+              (2, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO field ID
+
             case Op.Method(obj, name) => // needed
-              (2, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO method ID
+              (3, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO method ID
 
             case Op.Is(ty, obj) => ty match {
               case Type.Class(name) =>
-                (3, Type.Bool, Seq(obj, Val.Global(Global.Member(name, "type"), ty)))
-              case Type.Trait(name) =>
                 (4, Type.Bool, Seq(obj, Val.Global(Global.Member(name, "type"), ty)))
+              case Type.Trait(name) =>
+                (5, Type.Bool, Seq(obj, Val.Global(Global.Member(name, "type"), ty)))
             }
-
-            case Op.Field(obj, name) => // needed // TODO
-              (5, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO field ID
 
             /*
             // Not needed for hello world
