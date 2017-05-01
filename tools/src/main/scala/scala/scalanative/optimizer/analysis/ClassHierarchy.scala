@@ -43,12 +43,12 @@ object ClassHierarchy {
     var alltraits: Seq[Trait]   = _
     var allmethods: Seq[Method] = _
 
-    val methodStruct = Type.Struct(Global.None, Seq(Type.Int, /*Type.Ptr,*/ Type.Ptr))
+    val methodStruct = Type.Struct(Global.None, Seq(Type.Int, Rt.String, Type.Ptr))
     def methodsArray: Type.Array =
       Type.Array(methodStruct, allmethods.length)
     def methodsValue: Val.Array =
       Val.Array(methodStruct, allmethods.map { meth =>
-        Val.Struct(Global.None, Seq(Val.Int(meth.id), /*Val.Global(meth.name, meth.ty),*/ meth.value))
+        Val.Struct(Global.None, Seq(Val.Int(meth.id), Val.String(meth.name.id), meth.value))
       })
 
     def typeStruct: Type.Struct =
@@ -102,21 +102,21 @@ object ClassHierarchy {
     def fieldsWithLayout = allfields.zip(fieldsLayout.tys.collect {
       case MemoryLayout.Tpe(_, offset, _) => offset
     })
-    val fieldStruct = Type.Struct(Global.None, Seq(Type.Int, /*Type.Ptr,*/ Type.Long))
+    val fieldStruct = Type.Struct(Global.None, Seq(Type.Int, Rt.String, Type.Long))
     def fieldsArray: Type.Array =
       Type.Array(fieldStruct, allfields.length)
     def fieldsValue: Val.Array =
       Val.Array(fieldStruct, fieldsWithLayout.map {
         case (fld, offset) =>
-          Val.Struct(Global.None, Seq(Val.Int(fld.id), /*Val.Global(fld.name, fld.ty),*/ Val.Long(offset))) // TODO Var is removed in ClassLowering
+          Val.Struct(Global.None, Seq(Val.Int(fld.id), Val.String(fld.name.id), Val.Long(offset)))
       })
 
-    val methodStruct = Type.Struct(Global.None, Seq(Type.Int, /*Type.Ptr,*/ Type.Ptr))
+    val methodStruct = Type.Struct(Global.None, Seq(Type.Int, Rt.String, Type.Ptr))
     def methodsArray: Type.Array =
       Type.Array(methodStruct, allmethods.length)
     def methodsValue: Val.Array =
       Val.Array(methodStruct, allmethods.map { meth =>
-        Val.Struct(Global.None, Seq(Val.Int(meth.id), /*Val.Global(meth.name, meth.ty),*/ meth.value))
+        Val.Struct(Global.None, Seq(Val.Int(meth.id), Val.String(meth.name.id), meth.value))
       })
 
     def typeStruct: Type.Struct =
