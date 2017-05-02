@@ -26,8 +26,6 @@ object ByteCodeGen {
     withScratchBuffer { buffer =>
       val defns    = assembly
       val impl     = new Impl(config.target, env, defns, buffer)
-      //val codepath = "code.nbc"
-      //val datapath = "data.nbc"
       val path     = "bin.nbc"
       impl.gen()
       buffer.flip
@@ -46,7 +44,6 @@ object ByteCodeGen {
     var nextOffset: Offset = 0
     var bytesPut        = 0
     val globalOffsets   = mutable.Map.empty[Global, Offset]
-    val stringOffsets   = mutable.Map.empty[String, Offset]
 
     var currentFun: Global = _
     var nextReg         = 0
@@ -87,8 +84,8 @@ object ByteCodeGen {
           genGlobalDefn(name, ty, rhs)
         case Defn.Define(_, name, sig, insts) =>
           genFunctionDefn(name, sig, insts)
-        case Defn.Declare(_, name, sig) => // TODO builtins? (a lot)
-          //println(name.show)
+        //case Defn.Declare(attrs, name, sig) if attrs.isExtern => // TODO builtins? (a lot)
+          //println("decl " + name.show)
         case _ => ()
       }
     }
@@ -98,10 +95,10 @@ object ByteCodeGen {
                       rhs: nir.Val): Unit = {
       globalOffsets.put(name, nextOffset)
 
-      genGlobal(ty, rhs)
+      genGlobal(ty, rhs)(name)
     }
 
-    def genGlobal(ty: nir.Type, v: nir.Val): Unit = {
+    def genGlobal(ty: nir.Type, v: nir.Val)(implicit name: nir.Global): Unit = { // TODO name not right when going deep
       ty match {
         case nir.Type.Struct(_,tys) => {
           val nir.Val.Struct(_, vals) = v
@@ -109,15 +106,20 @@ object ByteCodeGen {
             genGlobal(inty, inv)
           }
         }
-        case nir.Type.Array(aty,n) => v match {
+
+        case nir.Type.Array(aty,_) => v match {
           case nir.Val.Array(_, vs) =>
-            vs.foreach(genGlobal(aty, _))
-          case nir.Val.Chars(s) =>
+            vs.foreach{ v =>
+              genGlobal(aty, v)
+            }
+
+          case nir.Val.Chars(s) => // TODO only 2 %f left
             s.foreach { char =>
               genGlobal(aty, Val.Short(char.toShort))
             }
             genGlobal(aty, Val.Short(0))
         }
+
         case _ => genBC(Data(MemoryLayout.sizeOf(ty) * 8), Seq(argFromVal(v)))
       }
     }
@@ -351,14 +353,14 @@ object ByteCodeGen {
 
         case _ => {
           val (builtinId, retty, args): (Int, Type, Seq[Val]) = op match {
-            case Op.Classalloc(name) => // needed
+            case Op.Classalloc(name) =>
               (1, Type.Ptr, Seq(Val.Global(Global.Member(name, "type"), Type.Ptr)))
 
-            case Op.Field(obj, name) => // needed // TODO
-              (2, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO field ID
+            case Op.Field(obj, name) =>
+              (2, Type.Ptr, Seq(obj/*, Val.Global(global, Type.Ptr)*/)) // TODO field ID
 
-            case Op.Method(obj, name) => // needed
-              (3, Type.Ptr, Seq(obj/*, Val.Global(name, Type.Ptr)*/)) // TODO method ID
+            case Op.Method(obj, name) =>
+              (3, Type.Ptr, Seq(obj/*, Val.Global(global, Type.Ptr)*/)) // TODO method ID
 
             case Op.Is(ty, obj) => ty match {
               case Type.Class(name) =>
@@ -451,13 +453,17 @@ object ByteCodeGen {
         case _ => 2 + immCount * op.immSize
       }
 
-      // TODO padding for data
-      //val padding = if (size > 0) (size - (nextOffset % size)) % size else 0
-      val padding = 0
+      val padding = op match {
+        case Data(s) if s > 0 => (size - (nextOffset % size)) % size
+        case _                => 0
+      }
       val offset = nextOffset + padding
       nextOffset += padding + size
 
-      funBytecode.append((offset, op, args))
+      (op match {
+        case _: Data => bytecode
+        case _       => funBytecode
+      }).append((offset, op, args))
     }
 
     def genBinary(in: Instr): Unit = {

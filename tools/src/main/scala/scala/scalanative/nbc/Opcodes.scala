@@ -53,7 +53,7 @@ object Opcode {
   final case class Data(size: Long) extends Opcode {
     override def toStr: String = ""
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(arg) => packImm(arg, (size*8).toInt)
+      case Seq(arg) => packImm(arg, immSize)
     }
     override def immSize = size.toInt / 8
   }
