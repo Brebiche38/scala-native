@@ -18,7 +18,7 @@ object Opcode {
       (buf | ((value & ((1 << vsize) - 1)) << bsize), bsize + vsize)
     }
     assert(size % 8 == 0)
-    packed.toByteArray.takeRight(size/8)
+    packed.toByteArray.takeRight(size/8).reverse
   }
 
   def packSize(s: Int): Int = s match {
@@ -35,6 +35,8 @@ object Opcode {
   }
 
   def packImm(arg: Arg, s: Int): Seq[Byte] = arg match {
+    case Arg.R(r) if r < 8  => Seq()
+    case Arg.R(r)           => packImmI(r, 2)
     case Arg.M(a) if s == 8 => packImmI(a, s)
     case Arg.I(v)           => packImmI(v, s)
     case Arg.F(v)           => packImmF(v, s)
@@ -48,6 +50,15 @@ object Opcode {
   def packImmF(i: Double, s: Int): Seq[Byte] = s match {
     case 4 => packImmI(java.lang.Float.floatToRawIntBits(i.toFloat).toLong, s)
     case 8 => packImmI(java.lang.Double.doubleToRawLongBits(i), s)
+  }
+
+  def packArg(arg: Arg): Int = arg match {
+    case Arg.R(r) if r < 8 => r
+    case Arg.R(_)          => 0x8
+    case Arg.I(_)          => 0xc
+    case Arg.F(_)          => 0xd
+    case Arg.M(_)          => 0xf
+    case Arg.G(_)          => 0xe
   }
 
   final case class Data(size: Long) extends Opcode {
@@ -68,20 +79,13 @@ object Opcode {
     override def toStr: String = super.toStr + "." + size.toString
 
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r1), Arg.R(r2)) =>
+      case Seq(arg1, arg2) =>
         pack(Seq(
           (0x0, 4),
           (packSize(size), 4),
-          (r1, 4),
-          (r2, 4)
-        ))
-      case Seq(Arg.R(r1), arg2) =>
-        pack(Seq(
-          (0x0, 4),
-          (packSize(size), 4),
-          (r1, 4),
-          (0x8, 4)
-        )) ++ packImm(arg2, size/8)
+          (packArg(arg1), 4),
+          (packArg(arg2), 4)
+        )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
     }
 
     override def immSize = size / 8
@@ -91,79 +95,70 @@ object Opcode {
     override def toStr: String = super.toStr + "." + size.toString
     def opcode: Int
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r1), Arg.R(r2)) =>
+      case Seq(arg1, arg2) =>
         pack(Seq(
-          (0x1, 2),
-          (opcode, 5),
+          (opcode, 6),
           (packSize(size), 2),
-          (r1, 3),
-          (r2, 4)
-        ))
-      case Seq(Arg.R(r1), arg2) =>
-        pack(Seq(
-          (0x1, 2),
-          (opcode, 5),
-          (packSize(size), 2),
-          (r1, 3),
-          (0x8, 4)
-        )) ++ packImm(arg2, size/8)
+          (packArg(arg1), 4),
+          (packArg(arg2), 4)
+        )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
     }
     override def immSize = size / 8
   }
 
   final case class Add(override val size: Int) extends Arith(size) {
-    override def opcode = 0x01
+    override def opcode = 0x10
   }
   final case class FAdd(override val size: Int) extends Arith(size) {
-    override def opcode = 0x11
-  }
-  final case class Sub (override val size: Int) extends Arith(size) {
-    override def opcode = 0x02
-  }
-  final case class FSub(override val size: Int) extends Arith(size) {
-    override def opcode = 0x12
-  }
-  final case class Mul (override val size: Int) extends Arith(size) {
-    override def opcode = 0x03
-  }
-  final case class FMul(override val size: Int) extends Arith(size) {
-    override def opcode = 0x13
-  }
-  final case class Div (override val size: Int) extends Arith(size) {
-    override def opcode = 0x04
-  }
-  final case class UDiv(override val size: Int) extends Arith(size) {
-    override def opcode = 0x0c
-  }
-  final case class FDiv(override val size: Int) extends Arith(size) {
     override def opcode = 0x14
   }
-  final case class Rem (override val size: Int) extends Arith(size) {
-    override def opcode = 0x05
+  final case class Sub (override val size: Int) extends Arith(size) {
+    override def opcode = 0x11
   }
-  final case class URem(override val size: Int) extends Arith(size) {
-    override def opcode = 0x0d
-  }
-  final case class FRem(override val size: Int) extends Arith(size) {
+  final case class FSub(override val size: Int) extends Arith(size) {
     override def opcode = 0x15
   }
-  final case class Shl (override val size: Int) extends Arith(size) {
+  final case class Mul (override val size: Int) extends Arith(size) {
+    override def opcode = 0x12
+  }
+  final case class FMul(override val size: Int) extends Arith(size) {
+    override def opcode = 0x16
+  }
+  final case class Div (override val size: Int) extends Arith(size) {
+    override def opcode = 0x18
+  }
+  final case class UDiv(override val size: Int) extends Arith(size) {
     override def opcode = 0x19
   }
-  final case class LShr(override val size: Int) extends Arith(size) {
+  final case class FDiv(override val size: Int) extends Arith(size) {
     override def opcode = 0x1a
   }
-  final case class AShr(override val size: Int) extends Arith(size) {
-    override def opcode = 0x1b
-  }
-  final case class And (override val size: Int) extends Arith(size) {
+  final case class Rem (override val size: Int) extends Arith(size) {
     override def opcode = 0x1c
   }
-  final case class Or  (override val size: Int) extends Arith(size) {
+  final case class URem(override val size: Int) extends Arith(size) {
     override def opcode = 0x1d
   }
-  final case class Xor (override val size: Int) extends Arith(size) {
+  final case class FRem(override val size: Int) extends Arith(size) {
     override def opcode = 0x1e
+  }
+  final case class Shl (override val size: Int) extends Arith(size) {
+    override def opcode = 0x0f
+  }
+  final case class LShr(override val size: Int) extends Arith(size) {
+    override def opcode = 0x13
+  }
+  final case class AShr(override val size: Int) extends Arith(size) {
+    override def opcode = 0x17
+  }
+  final case class And (override val size: Int) extends Arith(size) {
+    override def opcode = 0x0c
+  }
+  final case class Or  (override val size: Int) extends Arith(size) {
+    override def opcode = 0x0d
+  }
+  final case class Xor (override val size: Int) extends Arith(size) {
+    override def opcode = 0x0e
   }
 
   def convertBin(bin: nir.Bin, ty: nir.Type): Arith = {

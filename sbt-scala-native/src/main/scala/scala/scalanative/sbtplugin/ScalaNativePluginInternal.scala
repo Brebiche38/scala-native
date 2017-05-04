@@ -1,20 +1,34 @@
 package scala.scalanative
 package sbtplugin
 
+<<<<<<< HEAD
+=======
+import util._
+>>>>>>> Merged changes from Scalanative updates and begin assembly generation
 import sbtcrossproject.CrossPlugin.autoImport._
-import ScalaNativePlugin.autoImport._
 
+import ScalaNativePlugin.autoImport._
 import scalanative.nir
 import scalanative.tools
 import scalanative.io.VirtualDirectory
 import scalanative.util.{Scope => ResourceScope}
+<<<<<<< HEAD
 
 import sbt._, Keys._, complete.DefaultParsers._
+=======
+import sbt._
+import Keys._
+import complete.DefaultParsers._
+import xsbti.{Maybe, Position, Problem, Reporter, Severity}
+import KeyRanks.DTask
+>>>>>>> Merged changes from Scalanative updates and begin assembly generation
 
 import scala.util.Try
-
 import System.{lineSeparator => nl}
-import java.io.ByteArrayInputStream
+
+import java.io.{ByteArrayInputStream, File}
+
+import scala.scalanative.optimizer.analysis.ClassHierarchy.Top
 
 object ScalaNativePluginInternal {
 
@@ -48,7 +62,7 @@ object ScalaNativePluginInternal {
     taskKey[tools.LinkerResult]("Link NIR using Scala Native linker.")
 
   val nativeOptimizeNIR =
-    taskKey[Seq[nir.Defn]]("Optimize NIR produced after linking.")
+    taskKey[(Seq[nir.Defn], Top)]("Optimize NIR produced after linking.")
 
   val nativeGenerateLL =
     taskKey[Seq[File]]("Generate LLVM IR based on the optimized NIR.")
@@ -308,7 +322,7 @@ object ScalaNativePluginInternal {
       val optimized = nativeOptimizeNIR.value
       val cwd       = nativeWorkdir.value
       logger.time("Generating intermediate code") {
-        tools.codegen(config, optimized)
+        tools.codegen(config, optimized._1, optimized._2)
       }
       logger.info(s"Produced ${(cwd ** "*.ll").get.length} files")
       (cwd ** "*.ll").get.toSeq

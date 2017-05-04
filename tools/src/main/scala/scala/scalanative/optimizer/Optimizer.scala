@@ -30,7 +30,7 @@ object Optimizer {
             driver: Driver,
             assembly: Seq[Defn],
             dyns: Seq[String],
-            reporter: Reporter): Seq[Defn] = {
+            reporter: Reporter): (Seq[Defn], analysis.ClassHierarchy.Top) = {
     import reporter._
 
     val injects    = driver.passes.filter(_.isInjectionPass)
@@ -66,7 +66,7 @@ object Optimizer {
           loop(batchId, passResult, rest)
       }
 
-    partition(injected).par
+    val optimized = partition(injected).par
       .map {
         case (batchId, batchDefns) =>
           onStart(batchId, batchDefns)
@@ -78,5 +78,7 @@ object Optimizer {
       .seq
       .flatten
       .toSeq
+
+    (optimized, world)
   }
 }

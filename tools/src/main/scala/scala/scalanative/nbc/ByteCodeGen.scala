@@ -12,14 +12,14 @@ import scala.scalanative.optimizer.analysis.ControlFlow.{Block, Edge, Graph => C
 import scala.scalanative.nir._
 import scala.scalanative.nbc.Opcode._
 import scala.scalanative.nbc.RegAlloc.Allocator
-import scala.scalanative.optimizer.analysis.ClassHierarchy.Class
-import scala.scalanative.optimizer.analysis.ClassHierarchyExtractors.{ClassRef, FieldRef}
+import scala.scalanative.optimizer.analysis.ClassHierarchy.{Class, Trait, Top}
+import scala.scalanative.optimizer.analysis.ClassHierarchyExtractors.{ClassRef, FieldRef, MethodRef, TraitRef}
 import scala.scalanative.optimizer.analysis.MemoryLayout
 
 object ByteCodeGen {
 
   /** Generate code for given assembly. */
-  def apply(config: tools.Config, assembly: Seq[Defn]): Unit = Scope { implicit in =>
+  def apply(config: tools.Config, assembly: Seq[Defn], top: Top): Unit = Scope { implicit in =>
     val env = assembly.map(defn => defn.name -> defn).toMap
     val workdir = VirtualDirectory.real(config.workdir)
 
@@ -27,7 +27,7 @@ object ByteCodeGen {
       val defns    = assembly
       val impl     = new Impl(config.target, env, defns, buffer)
       val path     = "bin.nbc"
-      impl.gen()
+      impl.gen(top)
       buffer.flip
       workdir.write(Paths.get(path), buffer)
     }
@@ -62,11 +62,14 @@ object ByteCodeGen {
 
     //import builder._
 
-    def gen(): Unit = {
+    def gen(implicit top: Top): Unit = {
       // Step 1: produce bytecode
       genDefns(definitions)
 
       bytecode.foreach(genBinary)
+
+      println("File size: " + nextOffset)
+      println("Entry point: " + convertGlobals(Arg.G(Global.Top("main"))))
 
       // Step 2: resolve global offsets and print result
       /*
@@ -76,7 +79,7 @@ object ByteCodeGen {
       // TODO include scalanative functions
     }
 
-    def genDefns(defns: Seq[Defn]): Unit = {
+    def genDefns(defns: Seq[Defn])(implicit top: Top): Unit = {
       defns.foreach {
         case Defn.Const(_, name, ty, rhs) =>
           genGlobalDefn(name, ty, rhs)
@@ -126,7 +129,8 @@ object ByteCodeGen {
 
     def genFunctionDefn(name: Global,
                         sig: Type,
-                        insts: Seq[Inst]): Unit = {
+                        insts: Seq[Inst])
+                       (implicit top: Top): Unit = {
       globalOffsets.put(name, nextOffset)
 
       // Initialize register allocation
@@ -142,8 +146,10 @@ object ByteCodeGen {
 
       genBC(Function(name), Seq(Arg.I(nextReg)))
 
+      // TODO allocate space for spilled registers on the stack
+
       cfg.foreach { block =>
-        genBlock(block)(cfg, allocator)
+        genBlock(block)(cfg, allocator, top)
       }
 
       convertLabels()
@@ -181,7 +187,7 @@ object ByteCodeGen {
       }
     }
 
-    def genBlock(block: Block)(implicit cfg: CFG, allocator: Allocator): Unit = {
+    def genBlock(block: Block)(implicit cfg: CFG, allocator: Allocator, top: Top): Unit = {
       val Block(name, params, insts, isEntry) = block
 
       labelOffsets.put(name, nextOffset)
@@ -191,27 +197,27 @@ object ByteCodeGen {
         params.foreach { p =>
           genBytecode(Pop(convertSize(p.ty)), Seq(p))
         }
-        //insts.foreach(genInst)
-      } else if (block.isRegular) {
-        //insts.foreach(genInst)
-        // Epilogue
-        /* TODO
-        if (block.isRegular) {
-          block.outEdges.foreach { case Edge(_, to, Next.Label(_, vals)) =>
-            to.params.zipWithIndex.foreach { case (param, id) =>
-              genBytecode(Mov(convertSize(param.valty)), Seq(param, vals(id))) // TODO check
-            }
-          }
-        }
-        */
       } else if (block.isExceptionHandler) {
         genUnsupported()
-        //insts.foreach(genInst)
       }
-      insts.foreach(genInst)
+
+
+      if (block.isRegular) {
+        insts.foreach(genInst)
+
+        block.outEdges.foreach {
+          case Edge(_, _ @ Block(_, params, _, _), Next.Label(_, args)) =>
+            args.zip(params).foreach {
+              case (arg, param) if convertSize(arg.ty) != 0 =>
+                genBytecode(Mov(convertSize(arg.ty)), Seq(param, arg))
+              case _ => ()
+            }
+          case _ => ()
+        }
+      }
     }
 
-    def genInst(inst: Inst)(implicit allocator: Allocator): Unit = inst match {
+    def genInst(inst: Inst)(implicit allocator: Allocator, top: Top): Unit = inst match {
       case inst: Inst.Let =>
         genLet(inst)
 
@@ -249,7 +255,7 @@ object ByteCodeGen {
         genUnsupported()
     }
 
-    def genLet(inst: Inst.Let)(implicit allocator: Allocator): Unit = {
+    def genLet(inst: Inst.Let)(implicit allocator: Allocator, top: Top): Unit = {
       val op  = inst.op
       val lhs = Val.Local(inst.name, op.resty)
 
@@ -351,23 +357,28 @@ object ByteCodeGen {
         case Op.As(ty, obj) =>
           genBytecode(Mov(convertSize(ty)), Seq(lhs, obj))
 
+        case Op.Copy(v) =>
+          genBytecode(Mov(convertSize(v.ty)), Seq(lhs, v))
+
         case _ => {
           val (builtinId, retty, args): (Int, Type, Seq[Val]) = op match {
-            case Op.Classalloc(name) =>
-              (1, Type.Ptr, Seq(Val.Global(Global.Member(name, "type"), Type.Ptr)))
+            case Op.Classalloc(ClassRef(cls)) =>
+              (1, Type.Ptr, Seq(Val.Global(cls.rtti.name, Type.Ptr)))
 
-            case Op.Field(obj, name) =>
-              (2, Type.Ptr, Seq(obj/*, Val.Global(global, Type.Ptr)*/)) // TODO field ID
+            case Op.Field(obj, FieldRef(cls, fld)) =>
+              (2, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.fields.indexOf(fld))))
 
-            case Op.Method(obj, name) =>
-              (3, Type.Ptr, Seq(obj/*, Val.Global(global, Type.Ptr)*/)) // TODO method ID
+            case Op.Method(obj, MethodRef(cls: Class, meth)) if meth.isVirtual =>
+              (3, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.vtable.index(meth))))
+            case Op.Method(obj, MethodRef(cls: Class, meth)) if meth.isStatic =>
+              (4, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.vtable.index(meth))))
+            case Op.Method(obj, MethodRef(trt: Trait, meth)) =>
+              (5, Type.Ptr, Seq(obj, top.tables.dispatchVal, Val.Int(top.tables.dispatchOffset(meth.id))))
 
-            case Op.Is(ty, obj) => ty match {
-              case Type.Class(name) =>
-                (4, Type.Bool, Seq(obj, Val.Global(Global.Member(name, "type"), ty)))
-              case Type.Trait(name) =>
-                (5, Type.Bool, Seq(obj, Val.Global(Global.Member(name, "type"), ty)))
-            }
+            case Op.Is(ClassRef(cls), obj) =>
+                (6, Type.Bool, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr)))
+            case Op.Is(TraitRef(trt), obj) =>
+                (7, Type.Bool, Seq(obj, top.tables.classHasTraitVal, Val.Int(trt.id)))
 
             /*
             // Not needed for hello world
@@ -525,6 +536,7 @@ object ByteCodeGen {
       case Val.False         => Arg.I(0)
       case Val.Zero(_)       => Arg.I(0) // TODO only zero[java.lang.Object] in comparisons...
       case Val.Undef(_)      => Arg.I(0) // Kept for passing unused function parameters
+      case Val.Null          => Arg.I(0)
       case Val.Byte(v)       => Arg.I(v)
       case Val.Short(v)      => Arg.I(v)
       case Val.Int(v)        => Arg.I(v)
@@ -568,6 +580,8 @@ object ByteCodeGen {
       case Val.Double(v)     => Arg.F(v)
       case Val.Global(n, _)  =>
         Arg.G(n)
+      case Val.None          => Arg.I(0)
+      case Val.Null          => Arg.I(0)
       case _                 => unsupported(v)
     }
   }

@@ -1,5 +1,7 @@
 package scala.scalanative
 
+import optimizer.analysis.ClassHierarchy.Top
+
 // API use-cases
 //
 // sbt plugin:
@@ -54,12 +56,12 @@ package object tools {
                 driver: OptimizerDriver,
                 assembly: Seq[nir.Defn],
                 dyns: Seq[String],
-                reporter: OptimizerReporter = OptimizerReporter.empty): Seq[nir.Defn] =
+                reporter: OptimizerReporter = OptimizerReporter.empty): (Seq[nir.Defn], Top) =
     optimizer.Optimizer(config, driver, assembly, dyns, reporter)
 
   /** Given low-level assembly, emit LLVM IR for it to the buildDirectory. */
-  def codegen(config: Config, assembly: Seq[nir.Defn]): Unit = config.mode match {
-    case Mode.Interactive => scalanative.nbc.ByteCodeGen(config, assembly)
+  def codegen(config: Config, assembly: Seq[nir.Defn], top: Top): Unit = config.mode match {
+    case Mode.Interactive => scalanative.nbc.ByteCodeGen(config, assembly, top)
     case _                => scalanative.codegen.CodeGen(config, assembly)
   }
 }
