@@ -56,7 +56,7 @@ object Opcode {
     case Arg.R(r) if r < 8 => r
     case Arg.R(_)          => 0x8
     case Arg.I(_)          => 0xc
-    case Arg.F(_)          => 0xd
+    case Arg.F(_)          => 0xc
     case Arg.M(_)          => 0xf
     case Arg.G(_)          => 0xe
   }
@@ -189,37 +189,13 @@ object Opcode {
     override def toStr: String = super.toStr + "." + size.toString
     def opcode: Int
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r1), Arg.R(r2)) =>
-        pack(Seq(
-          (0x3, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (r1, 4),
-          (r2, 4)
-        ))
-      case Seq(Arg.R(r1), arg2) =>
-        pack(Seq(
-          (0x3, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (r1, 4),
-          (0x8, 4)
-        )) ++ packImm(arg2, size/8)
-      case Seq(arg1, Arg.R(r2)) =>
-        pack(Seq(
-          (0x3, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (0x8, 4),
-          (r2, 4)
-        )) ++ packImm(arg1, size/8)
       case Seq(arg1, arg2) =>
         pack(Seq(
           (0x3, 4),
           (opcode, 2),
           (packSize(size), 2),
-          (0x8, 4),
-          (0x8, 4)
+          (packArg(arg1), 4),
+          (packArg(arg2), 4)
         )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
     }
     override def immSize = size / 8
@@ -237,13 +213,13 @@ object Opcode {
   sealed abstract class SetIf extends Opcode {
     def opcode: Int
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r)) =>
+      case Seq(arg) =>
         pack(Seq(
           (0xe, 4),
           (opcode, 4),
           (0x0, 4), // padding
-          (r, 4)
-        ))
+          (packArg(arg), 4)
+        )) ++ packImm(arg, 8)
     }
   }
   final case object SetEq extends SetIf {
@@ -264,26 +240,38 @@ object Opcode {
   final case object SetGt extends SetIf {
     override def opcode = 0x7
   }
+  final case object SetBe extends SetIf {
+    override def opcode = 0x8
+  }
+  final case object SetB extends SetIf {
+    override def opcode = 0x9
+  }
+  final case object SetAe extends SetIf {
+    override def opcode = 0xa
+  }
+  final case object SetA extends SetIf {
+    override def opcode = 0xb
+  }
 
   def convertComp(comp: nir.Comp, ty: nir.Type): (Comp, SetIf) = {
     val size = convertSize(ty)
     comp match {
       case nir.Comp.Ieq => (SCmp(size),SetEq)
       case nir.Comp.Ine => (SCmp(size),SetNe)
-      case nir.Comp.Ugt => (UCmp(size),SetGt)
-      case nir.Comp.Uge => (UCmp(size),SetGe)
-      case nir.Comp.Ult => (UCmp(size),SetLt)
-      case nir.Comp.Ule => (UCmp(size),SetLe)
+      case nir.Comp.Ugt => (UCmp(size),SetA)
+      case nir.Comp.Uge => (UCmp(size),SetAe)
+      case nir.Comp.Ult => (UCmp(size),SetB)
+      case nir.Comp.Ule => (UCmp(size),SetBe)
       case nir.Comp.Sgt => (SCmp(size),SetGt)
       case nir.Comp.Sge => (SCmp(size),SetGe)
       case nir.Comp.Slt => (SCmp(size),SetLt)
       case nir.Comp.Sle => (SCmp(size),SetLe)
       case nir.Comp.Feq => (FCmp(size),SetEq)
       case nir.Comp.Fne => (FCmp(size),SetNe)
-      case nir.Comp.Fgt => (FCmp(size),SetGt)
-      case nir.Comp.Fge => (FCmp(size),SetGe)
-      case nir.Comp.Flt => (FCmp(size),SetLt)
-      case nir.Comp.Fle => (FCmp(size),SetLe)
+      case nir.Comp.Fgt => (FCmp(size),SetA)
+      case nir.Comp.Fge => (FCmp(size),SetAe)
+      case nir.Comp.Flt => (FCmp(size),SetB)
+      case nir.Comp.Fle => (FCmp(size),SetBe)
     }
   }
 
@@ -291,54 +279,64 @@ object Opcode {
     override def toStr: String = super.toStr + "." + before.toString + "." + after.toString
     def opcode: Int
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r1), Arg.R(r2)) =>
+      case Seq(arg1, arg2) =>
         pack(Seq(
           (0x2, 2),
-          (opcode, 3),
-          (packSize(before), 2),
-          (packSize(after), 2),
-          (r1, 3),
-          (r2, 4)
-        ))
-      case Seq(Arg.R(r1), arg2) =>
-        pack(Seq(
-          (0x2, 2),
-          (opcode, 3),
-          (packSize(before), 2),
-          (packSize(after), 2),
-          (r1, 3),
-          (0x8, 4)
-        )) ++ packImm(arg2, before/8)
+          (opcode, 6),
+          (packArg(arg1), 4),
+          (packArg(arg2), 4)
+        )) ++ packImm(arg1, before/8) ++ packImm(arg2, after/8)
     }
 
     override def immSize: Int = before / 8
   }
   final case class Trunc(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x0
+    override def opcode = 0x00 + ((before, after) match {
+      case (16,  8) => 0x0
+      case (32,  8) => 0x1
+      case (64,  8) => 0x2
+      case (32, 16) => 0x3
+      case (64, 16) => 0x4
+      case (64, 32) => 0x5
+    })
   }
   final case class Zext(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x2
+    override def opcode = 0x10 + ((before, after) match {
+      case ( 8, 16) => 0x0
+      case ( 8, 32) => 0x1
+      case ( 8, 64) => 0x2
+      case (16, 32) => 0x3
+      case (16, 64) => 0x4
+      case (32, 64) => 0x5
+    })
   }
   final case class Sext(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x3
+    override def opcode = 0x18 + ((before, after) match {
+      case ( 8, 16) => 0x0
+      case ( 8, 32) => 0x1
+      case ( 8, 64) => 0x2
+      case (16, 32) => 0x3
+      case (16, 64) => 0x4
+      case (32, 64) => 0x5
+    })
   }
   final case class FpTrunc(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x1
+    override def opcode = 0x08
   }
   final case class FpExt(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x1
+    override def opcode = 0x0f
   }
   final case class F2I(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x4
+    override def opcode = 0x20 + packSizeF(before) * 0x4 + packSize(after)
   }
   final case class F2UI(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x5
+    override def opcode = 0x28 + packSizeF(before) * 0x4 + packSize(after)
   }
   final case class I2F(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x6
+    override def opcode = 0x30 + packSize(before) * 0x2 + packSizeF(after)
   }
   final case class UI2F(override val before: Int, override val after: Int) extends Conv(before, after) {
-    override def opcode = 0x7
+    override def opcode = 0x38 + packSize(before) * 0x2 + packSizeF(after)
   }
 
   def convertConv(conv: nir.Conv, ta: nir.Type, tb: nir.Type): Opcode = {
@@ -363,21 +361,13 @@ object Opcode {
   sealed abstract class CF extends Opcode {
     def opcode: Int
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r)) =>
+      case Seq(arg) =>
         pack(Seq(
           (0xc, 4),
           (opcode, 4),
           (0x0, 4), // Padding
-          (r, 4)
-        ))
-      case Seq(Arg.M(a)) =>
-        pack(Seq(
-          (0xc, 4),
-          (opcode, 4),
-          (0x0, 4), // Padding
-          (0x8, 4)
-        )) ++ packImmI(a, 8)
-      case _ => Seq()
+          (packArg(arg), 4)
+        )) ++ packImm(arg, 8)
     }
     override def immSize: Int = 8
   }
@@ -437,21 +427,13 @@ object Opcode {
     override def toStr: String = super.toStr + "." + size.toString
     def opcode: Int
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r)) =>
-        pack(Seq(
-          (0x1, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (0x0, 4), // Padding
-          (r, 4)
-        ))
       case Seq(arg) =>
         pack(Seq(
           (0x1, 4),
           (opcode, 2),
           (packSize(size), 2),
           (0x0, 4), // Padding
-          (0x8, 4)
+          (packArg(arg), 4)
         )) ++ packImm(arg, size/8)
     }
 
@@ -465,18 +447,12 @@ object Opcode {
   }
   final case object Alloc extends Opcode {
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r1), Arg.R(r2)) =>
+      case Seq(arg1, arg2) =>
         pack(Seq(
           (0xff, 8),
-          (r1, 4),
-          (r2, 4)
-        ))
-      case Seq(Arg.R(r1), Arg.I(v2)) =>
-        pack(Seq(
-          (0xff, 8),
-          (r1, 4),
-          (0x8, 4)
-        )) ++ packImmI(v2, immSize) // Limit to shorts for now
+          (packArg(arg1), 4),
+          (packArg(arg2), 4)
+        )) ++ packImm(arg1, 8) ++ packImm(arg2, immSize) // Limit to shorts for now
     }
     override def immSize: Int = 2
   }
@@ -488,60 +464,28 @@ object Opcode {
   final case class Store(override val size: Int) extends Memory(size) {
     override def opcode = 0x0
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r1), Arg.R(r2)) =>
+      case Seq(arg1, arg2) =>
         pack(Seq(
           (0x2, 4),
           (opcode, 2),
           (packSize(size), 2),
-          (r1, 4),
-          (r2, 4)
-        ))
-      case Seq(Arg.R(r1), arg2) =>
-        pack(Seq(
-          (0x2, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (r1, 4),
-          (0x8, 4)
-        )) ++ packImm(arg2, size/8)
-      case Seq(Arg.M(a1), Arg.R(r2)) =>
-        pack(Seq(
-          (0x2, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (0x8, 4),
-          (r2, 4)
-        )) ++ packImmI(a1, 8)
-      case Seq(Arg.M(a1), arg2) =>
-        pack(Seq(
-          (0x2, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (0x8, 4),
-          (0x8, 4)
-        )) ++ packImmI(a1, 8) ++ packImm(arg2, size/8)
+          (packArg(arg1), 4),
+          (packArg(arg2), 4)
+        )) ++ packImm(arg1, 8) ++ packImm(arg2, size/8)
     }
     override def immSize: Int = 8
   }
   final case class Load(override val size: Int) extends Memory(size) {
     override def opcode = 0x1
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(Arg.R(r1), Arg.R(r2)) =>
+      case Seq(arg1, arg2) =>
         pack(Seq(
           (0x2, 4),
           (opcode, 2),
           (packSize(size), 2),
-          (r1, 4),
-          (r2, 4)
-        ))
-      case Seq(Arg.R(r1), arg2) =>
-        pack(Seq(
-          (0x2, 4),
-          (opcode, 2),
-          (packSize(size), 2),
-          (r1, 4),
-          (0x8, 4)
-        )) ++ packImm(arg2, 8)
+          (packArg(arg1), 4),
+          (packArg(arg2), 4)
+        )) ++ packImm(arg1, 8) ++ packImm(arg2, 8)
     }
     override def immSize: Int = 8
   }

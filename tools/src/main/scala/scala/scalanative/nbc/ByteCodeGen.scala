@@ -293,6 +293,7 @@ object ByteCodeGen {
         case Op.Elem(ty, ptr, indexes) =>
           val size = MemoryLayout.sizeOf(ty)
 
+          // TODO simplify with MemoryLayout
           val firstComputable = indexes.head match {
             case _: Val.Byte   => true
             case _: Val.Short  => true
@@ -356,9 +357,6 @@ object ByteCodeGen {
 
         case Op.As(ty, obj) =>
           genBytecode(Mov(convertSize(ty)), Seq(lhs, obj))
-
-        case Op.Copy(v) =>
-          genBytecode(Mov(convertSize(v.ty)), Seq(lhs, v))
 
         case _ => {
           val (builtinId, retty, args): (Int, Type, Seq[Val]) = op match {
