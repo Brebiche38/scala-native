@@ -6,7 +6,7 @@ import scala.scalanative.util.unsupported
 sealed abstract class Opcode {
   def toStr: String = this.getClass.getSimpleName.toLowerCase.filter(_.isLetter)
   def toBin(args: Seq[Arg]): Seq[Byte]
-  def immSize: Int = 0
+  def immSize: Int => Int = _ => 0
 }
 
 object Opcode {
@@ -37,7 +37,7 @@ object Opcode {
   def packImm(arg: Arg, s: Int): Seq[Byte] = arg match {
     case Arg.R(r) if r < 8  => Seq()
     case Arg.R(r)           => packImmI(r, 2)
-    case Arg.M(a) if s == 8 => packImmI(a, s)
+    case Arg.M(a)           => packImmI(a, s)
     case Arg.I(v)           => packImmI(v, s)
     case Arg.F(v)           => packImmF(v, s)
     case Arg.G(g)           => println(g.show); packImmI(0, s)
@@ -64,15 +64,16 @@ object Opcode {
   final case class Data(size: Long) extends Opcode {
     override def toStr: String = ""
     override def toBin(args: Seq[Arg]) = args match {
-      case Seq(arg) => packImm(arg, immSize)
+      case Seq(arg) => packImm(arg, immSize(0))
     }
-    override def immSize = size.toInt / 8
+    override def immSize = _ => size.toInt / 8
   }
 
-  // Not in the final code (only for debug purposes
+  // Not in the final code (only for debug purposes)
   final case class Function(name: nir.Global) extends Opcode {
     override def toStr: String = name.show
     override def toBin(args: Seq[Arg]) = Seq()
+    override def immSize = _ => 2 // Number of spilled registers
   }
 
   final case class Mov(size: Int) extends Opcode {
@@ -88,7 +89,7 @@ object Opcode {
         )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
     }
 
-    override def immSize = size / 8
+    override def immSize = _ => size / 8
   }
 
   sealed abstract class Arith(val size: Int) extends Opcode {
@@ -103,7 +104,7 @@ object Opcode {
           (packArg(arg2), 4)
         )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
     }
-    override def immSize = size / 8
+    override def immSize = _ => size / 8
   }
 
   final case class Add(override val size: Int) extends Arith(size) {
@@ -198,7 +199,7 @@ object Opcode {
           (packArg(arg2), 4)
         )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
     }
-    override def immSize = size / 8
+    override def immSize = _ => size / 8
   }
   final case class SCmp(override val size: Int) extends Comp(size) {
     override def opcode = 0x0
@@ -219,7 +220,7 @@ object Opcode {
           (opcode, 4),
           (0x0, 4), // padding
           (packArg(arg), 4)
-        )) ++ packImm(arg, 8)
+        )) ++ packImm(arg, 0)
     }
   }
   final case object SetEq extends SetIf {
@@ -288,7 +289,10 @@ object Opcode {
         )) ++ packImm(arg1, before/8) ++ packImm(arg2, after/8)
     }
 
-    override def immSize: Int = before / 8
+    override def immSize = {
+      case 0 => before / 8
+      case 1 => after / 8
+    }
   }
   final case class Trunc(override val before: Int, override val after: Int) extends Conv(before, after) {
     override def opcode = 0x00 + ((before, after) match {
@@ -367,9 +371,8 @@ object Opcode {
           (opcode, 4),
           (0x0, 4), // Padding
           (packArg(arg), 4)
-        )) ++ packImm(arg, 8)
+        )) ++ packImm(arg, 0)
     }
-    override def immSize: Int = 8
   }
   final case object Jump extends CF {
     override def opcode = 0x1
@@ -437,7 +440,7 @@ object Opcode {
         )) ++ packImm(arg, size/8)
     }
 
-    override def immSize: Int = size / 8
+    override def immSize = _ => size / 8
   }
   final case class Push(override val size: Int) extends Stack(size) {
     override def opcode = 0x0
@@ -452,9 +455,12 @@ object Opcode {
           (0xff, 8),
           (packArg(arg1), 4),
           (packArg(arg2), 4)
-        )) ++ packImm(arg1, 8) ++ packImm(arg2, immSize) // Limit to shorts for now
+        )) ++ packImm(arg1, immSize(0)) ++ packImm(arg2, immSize(1)) // Limit to shorts for now
     }
-    override def immSize: Int = 2
+    override def immSize = {
+      case 0 => 8
+      case 1 => 2
+    }
   }
 
   sealed abstract class Memory(val size: Int) extends Opcode {
@@ -473,7 +479,10 @@ object Opcode {
           (packArg(arg2), 4)
         )) ++ packImm(arg1, 8) ++ packImm(arg2, size/8)
     }
-    override def immSize: Int = 8
+    override def immSize = {
+      case 0 => 8
+      case 1 => size/8
+    }
   }
   final case class Load(override val size: Int) extends Memory(size) {
     override def opcode = 0x1
@@ -485,9 +494,12 @@ object Opcode {
           (packSize(size), 2),
           (packArg(arg1), 4),
           (packArg(arg2), 4)
-        )) ++ packImm(arg1, 8) ++ packImm(arg2, 8)
+        )) ++ packImm(arg1, 0) ++ packImm(arg2, 8)
     }
-    override def immSize: Int = 8
+    override def immSize = {
+      case 0 => 0
+      case 1 => 8
+    }
   }
 
   final case object Nop extends Opcode {

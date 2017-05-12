@@ -40,6 +40,7 @@ object ByteCodeGen {
     //val builder         = new ShowBuilder
 
     val bytecode        = mutable.Buffer.empty[Instr]
+    var funStarts: Offset = 0
 
     var nextOffset: Offset = 0
     var bytesPut        = 0
@@ -133,6 +134,16 @@ object ByteCodeGen {
                        (implicit top: Top): Unit = {
       globalOffsets.put(name, nextOffset)
 
+      if (funStarts == 0) {
+        funStarts = nextOffset
+        println("Offset of 1st function ", funStarts)
+      }
+
+      if (name == Global.Top("main")) {
+        println("Offset of main: ", nextOffset)
+        insts.foreach(i => println(i.show))
+      }
+
       // Initialize register allocation
       nextReg = 0
       currentFun = name
@@ -154,25 +165,6 @@ object ByteCodeGen {
 
       convertLabels()
     }
-
-    /* Dummy register allocation
-    def allocateRegisters(insts: Seq[Inst], cfg: CFG): Unit = {
-      insts.foreach(allocateInst)
-    }
-
-    def allocateInst(inst: Inst): Unit = inst match {
-      case Inst.Let(n, _) => allocate(n)
-      case Inst.Label(_, ps) => ps.foreach {
-        case Val.Local(n, _) => allocate(n)
-      }
-      case _ => ()
-    }
-
-    def allocate(n: Local): Unit = {
-      allocator.put(n, Arg.R(nextReg))
-      nextReg += 1
-    }
-    */
 
     def convertLabels(): Unit = {
       funBytecode.foreach {
@@ -361,15 +353,15 @@ object ByteCodeGen {
         case _ => {
           val (builtinId, retty, args): (Int, Type, Seq[Val]) = op match {
             case Op.Classalloc(ClassRef(cls)) =>
-              (1, Type.Ptr, Seq(Val.Global(cls.rtti.name, Type.Ptr)))
+              (1, Type.Ptr, Seq(Val.Global(cls.rtti.name, Type.Ptr), Val.Long(MemoryLayout.sizeOf(cls.layout.struct))))
 
             case Op.Field(obj, FieldRef(cls, fld)) =>
               (2, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.fields.indexOf(fld))))
 
             case Op.Method(obj, MethodRef(cls: Class, meth)) if meth.isVirtual =>
-              (3, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.vtable.index(meth))))
+              (3, Type.Ptr, Seq(obj, Val.Int(cls.vtable.index(meth))))
             case Op.Method(obj, MethodRef(cls: Class, meth)) if meth.isStatic =>
-              (4, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.vtable.index(meth))))
+              (4, Type.Ptr, Seq(Val.Global(meth.name, Type.Ptr)))
             case Op.Method(obj, MethodRef(trt: Trait, meth)) =>
               (5, Type.Ptr, Seq(obj, top.tables.dispatchVal, Val.Int(top.tables.dispatchOffset(meth.id))))
 
@@ -439,27 +431,21 @@ object ByteCodeGen {
     }
 
     def genBC(op: Opcode, args: Seq[Arg]): Unit = {
-      val immCount = args.map {
-        case Arg.R(_) => 0
-        case _        => 1
+      val immSize = args.zipWithIndex.map { case (arg, idx) =>
+        arg match {
+          case Arg.R(r) if r < 8 => 0
+          case Arg.R(_) => 2
+          case Arg.L(_) => 8
+          case Arg.G(_) => 8
+          case Arg.I(_) => op.immSize(idx)
+          case Arg.F(_) => op.immSize(idx)
+        }
       }.sum
 
       val size = op match {
         case Data(s)         => s/8
         case Function(_)     => 0
-        case Store(s)        => 2 + (args match {
-          case Seq(arg1, arg2) =>
-            val imm1 = arg1 match {
-              case Arg.R(_) => 0
-              case _        => 8
-            }
-            val imm2 = arg2 match {
-              case Arg.R(_) => 0
-              case _        => s/8
-            }
-            imm1 + imm2
-        })
-        case _ => 2 + immCount * op.immSize
+        case _ => 2 + immSize
       }
 
       val padding = op match {
@@ -477,6 +463,13 @@ object ByteCodeGen {
 
     def genBinary(in: Instr): Unit = {
       val (offset, op, args) = in
+      op match {
+        case Function(Global.Top("main")) => println("Offset and bytesPut of main", offset, bytesPut)
+        case _ => ()
+      }
+      if (offset == funStarts) {
+        println("Bytes put at beginning of functions: " + bytesPut)
+      }
       while(bytesPut < offset) {
         buffer.put(0xde.toByte)
         bytesPut += 1
