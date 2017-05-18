@@ -18,7 +18,9 @@ object Opcode {
       (buf | ((value & ((1 << vsize) - 1)) << bsize), bsize + vsize)
     }
     assert(size % 8 == 0)
-    packed.toByteArray.takeRight(size/8).reverse
+    val arr = packed.toByteArray.takeRight(size/8)
+    val padded = if (arr.length < size/8) Array.fill(size/8 - arr.length)( 0x00.toByte ) ++ arr else arr
+    padded.reverse
   }
 
   def packSize(s: Int): Int = s match {
@@ -37,14 +39,15 @@ object Opcode {
   def packImm(arg: Arg, s: Int): Seq[Byte] = arg match {
     case Arg.R(r) if r < 8  => Seq()
     case Arg.R(r)           => packImmI(r, 2)
-    case Arg.M(a)           => packImmI(a, s)
-    case Arg.I(v)           => packImmI(v, s)
-    case Arg.F(v)           => packImmF(v, s)
-    case Arg.G(g)           => println(g.show); packImmI(0, s)
+    case Arg.M(a)           => packImmI(a, 8)
+    case Arg.I(v) if s > 0  => packImmI(v, s)
+    case Arg.F(v) if s > 0  => packImmF(v, s)
+    case Arg.G(g)           => packImmI(0, 8)
   }
   def packImmI(i: Long, s: Int): Seq[Byte] = {
     val arr = BigInt(i).toByteArray.takeRight(s)
-    if (arr.length < s) Array.fill(s - arr.length)( 0x00.toByte ) ++ arr else arr
+    val padded = if (arr.length < s) Array.fill(s - arr.length)( 0x00.toByte ) ++ arr else arr
+    padded.reverse
   }
 
   def packImmF(i: Double, s: Int): Seq[Byte] = s match {
@@ -53,6 +56,7 @@ object Opcode {
   }
 
   def packArg(arg: Arg): Int = arg match {
+    case Arg.R(-1)         => 0x9
     case Arg.R(r) if r < 8 => r
     case Arg.R(_)          => 0x8
     case Arg.I(_)          => 0xc
@@ -72,7 +76,13 @@ object Opcode {
   // Not in the final code (only for debug purposes)
   final case class Function(name: nir.Global) extends Opcode {
     override def toStr: String = name.show
-    override def toBin(args: Seq[Arg]) = Seq()
+    override def toBin(args: Seq[Arg]) = args match {
+      case Seq(Arg.I(v)) =>
+        pack(Seq(
+          (0xfe, 8),
+          (v.toInt, 8)
+        ))
+    }
     override def immSize = _ => 2 // Number of spilled registers
   }
 
@@ -192,7 +202,7 @@ object Opcode {
     override def toBin(args: Seq[Arg]) = args match {
       case Seq(arg1, arg2) =>
         pack(Seq(
-          (0x3, 4),
+          (0xe, 4),
           (opcode, 2),
           (packSize(size), 2),
           (packArg(arg1), 4),
@@ -216,9 +226,8 @@ object Opcode {
     override def toBin(args: Seq[Arg]) = args match {
       case Seq(arg) =>
         pack(Seq(
-          (0xe, 4),
-          (opcode, 4),
-          (0x0, 4), // padding
+          (0xef, 8),
+          (opcode, 4), // padding
           (packArg(arg), 4)
         )) ++ packImm(arg, 0)
     }
@@ -377,23 +386,23 @@ object Opcode {
   final case object Jump extends CF {
     override def opcode = 0x1
   }
-  final case object Ifeq extends CF {
+
+  final case object JumpIf extends CF {
     override def opcode = 0x2
-  }
-  final case object Ifne extends CF {
-    override def opcode = 0x3
-  }
-  final case object Ifle extends CF {
-    override def opcode = 0x4
-  }
-  final case object Iflt extends CF {
-    override def opcode = 0x5
-  }
-  final case object Ifge extends CF {
-    override def opcode = 0x6
-  }
-  final case object Ifgt extends CF {
-    override def opcode = 0x7
+    override def toBin(args: Seq[Arg]): Seq[Byte] = args match {
+      case Seq(arg, dest) =>
+        pack(Seq(
+          (0xc, 4),
+          (opcode, 4),
+          (0x0, 4), // Padding
+          (packArg(arg), 4)
+        )) ++ packImm(arg, 1) ++ packImm(dest, 8)
+    }
+
+    override def immSize: (Int) => Int = {
+      case 0 => 1
+      case 1 => 8
+    }
   }
 
   final case object Call extends CF {

@@ -12,7 +12,7 @@ object RegAlloc {
 
   val stats = mutable.Map.empty[Int, Int]
 
-  def allocateRegisters(insts: Seq[Inst], cfg: CFG): Allocator = {
+  def allocateRegisters(insts: Seq[Inst], cfg: CFG): (Allocator, Int) = {
     // Interval computing
     val intervals = buildIntervals(cfg, insts.size)
 
@@ -129,7 +129,7 @@ object RegAlloc {
       case Some(i) => stats.update(nextSpill - 8, i+1)
       case None    => stats.put(nextSpill - 8, 1)
     }
-    allocator.toMap
+    (allocator.toMap, nextSpill - 8)
   }
 
   def buildIntervals(cfg: CFG, size: Int): Map[Local, Interval] = {

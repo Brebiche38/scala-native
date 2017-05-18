@@ -23,21 +23,27 @@ object ByteCodeGen {
     val env = assembly.map(defn => defn.name -> defn).toMap
     val workdir = VirtualDirectory.real(config.workdir)
 
-    withScratchBuffer { buffer =>
-      val defns    = assembly
-      val impl     = new Impl(config.target, env, defns, buffer)
-      val path     = "bin.nbc"
-      impl.gen(top)
-      buffer.flip
-      workdir.write(Paths.get(path), buffer)
+    withScratchBuffer { buffer1 =>
+      withScratchBuffer { buffer2 =>
+        val defns    = assembly
+        val impl     = new Impl(config.target, env, defns, buffer1, buffer2)
+        val path1    = "bin.nbc"
+        val path2    = "txt.nbc"
+        impl.gen(top)
+        buffer1.flip
+        workdir.write(Paths.get(path1), buffer1)
+        buffer2.flip
+        workdir.write(Paths.get(path2), buffer2)
+      }
     }
   }
 
   private final class Impl(target: String,
                            env: Map[Global, Defn],
                            defns: Seq[Defn],
-                           buffer: ByteBuffer) {
-    //val builder         = new ShowBuilder
+                           binbuf: ByteBuffer,
+                           txtbuf: ByteBuffer) {
+    val builder         = new ShowBuilder
 
     val bytecode        = mutable.Buffer.empty[Instr]
     var funStarts: Offset = 0
@@ -61,7 +67,7 @@ object ByteCodeGen {
       case _                    => -1
     }
 
-    //import builder._
+    import builder._
 
     def gen(implicit top: Top): Unit = {
       // Step 1: produce bytecode
@@ -69,15 +75,11 @@ object ByteCodeGen {
 
       bytecode.foreach(genBinary)
 
-      println("File size: " + nextOffset)
-      println("Entry point: " + convertGlobals(Arg.G(Global.Top("main"))))
+      println("run 0x" + nextOffset.toHexString + " " + convertGlobals(Arg.G(Global.Top("main"))).toStr)
 
       // Step 2: resolve global offsets and print result
-      /*
       bytecode.foreach(printBytecode)
-      buffer.put(builder.toString.getBytes)
-      */
-      // TODO include scalanative functions
+      txtbuf.put(builder.toString.getBytes)
     }
 
     def genDefns(defns: Seq[Defn])(implicit top: Top): Unit = {
@@ -134,16 +136,6 @@ object ByteCodeGen {
                        (implicit top: Top): Unit = {
       globalOffsets.put(name, nextOffset)
 
-      if (funStarts == 0) {
-        funStarts = nextOffset
-        println("Offset of 1st function ", funStarts)
-      }
-
-      if (name == Global.Top("main")) {
-        println("Offset of main: ", nextOffset)
-        insts.foreach(i => println(i.show))
-      }
-
       // Initialize register allocation
       nextReg = 0
       currentFun = name
@@ -153,11 +145,9 @@ object ByteCodeGen {
 
       val cfg = CFG(insts)
 
-      val allocator = RegAlloc.allocateRegisters(insts, cfg)
+      val (allocator, spilledRegs) = RegAlloc.allocateRegisters(insts, cfg)
 
-      genBC(Function(name), Seq(Arg.I(nextReg)))
-
-      // TODO allocate space for spilled registers on the stack
+      genBC(Function(name), Seq(Arg.I(spilledRegs)))
 
       cfg.foreach { block =>
         genBlock(block)(cfg, allocator, top)
@@ -229,16 +219,18 @@ object ByteCodeGen {
         genBC(Jump, Seq(getNext(next)))
 
       case Inst.If(cond, thenp, elsep) =>
-        genBytecode(UCmp(convertSize(cond.ty)), Seq(Val.True, cond))
-        genBC(Ifne, Seq(getNext(elsep)))
-        genBC(Jump, Seq(getNext(thenp)))
+        genBC(JumpIf, Seq(convertVal(cond), getNext(thenp)))
+        genBC(Jump, Seq(getNext(elsep)))
 
       case Inst.Switch(scrut, default, cases) =>
+        genUnsupported() // TODO
+        /*
         cases.zipWithIndex.foreach { case (next, id) =>
-          genBytecode(UCmp(convertSize(scrut.ty)), Seq(Val.Int(id), scrut)) // TODO types don't match
-          genBC(Ifeq, Seq(getNext(next)))
+          genBC(JumpIf, Seq(Arg.I(id), convertVal(scrut), getNext(next)))
         }
         genBC(Jump, Seq(getNext(default)))
+        */
+
 
       case Inst.None =>
         ()
@@ -267,8 +259,8 @@ object ByteCodeGen {
 
         case Op.Comp(comp, ty, l, r) => {
           val (cmp, setif) = convertComp(comp, ty)
-          genBytecode(cmp, Seq(l, r))
           genBytecode(Mov(convertSize(Type.Bool)), Seq(lhs, Val.False))
+          genBytecode(cmp, Seq(l, r))
           genBytecode(setif, Seq(lhs))
         }
 
@@ -418,7 +410,10 @@ object ByteCodeGen {
         }
 
         // 2. call function
-        genBytecode(Call, Seq(ptr))
+        ptr match {
+          case Val.Global(Global.Top("scalanative_init"), _) => genBytecode(Builtin(0), Seq())
+          case _ => genBytecode(Call, Seq(ptr))
+        }
 
         // 3. recover return value
         if (isReturnable(retty)) {
@@ -444,7 +439,7 @@ object ByteCodeGen {
 
       val size = op match {
         case Data(s)         => s/8
-        case Function(_)     => 0
+        case Function(_)     => 2
         case _ => 2 + immSize
       }
 
@@ -463,64 +458,39 @@ object ByteCodeGen {
 
     def genBinary(in: Instr): Unit = {
       val (offset, op, args) = in
-      op match {
-        case Function(Global.Top("main")) => println("Offset and bytesPut of main", offset, bytesPut)
-        case _ => ()
-      }
-      if (offset == funStarts) {
-        println("Bytes put at beginning of functions: " + bytesPut)
-      }
+
       while(bytesPut < offset) {
-        buffer.put(0xde.toByte)
+        binbuf.put(0xde.toByte)
         bytesPut += 1
       }
 
       val bytes = op.toBin(args.map(convertGlobals)).toArray
       bytesPut += bytes.length
-      buffer.put(bytes)
+      binbuf.put(bytes)
     }
 
-    /*
     def printBytecode(in: Instr): Unit = {
       val (offset, op, args) = in
 
-      // Print padding
-      while (nextPrintOffset < offset) {
-        printByte(nextPrintOffset, 0)
-        nextPrintOffset += 1
-      }
-
       // Print value
-      op match {
+      val str = op match {
         case Data(s) =>
           val Seq(arg) = args
-          val str = convertGlobals(arg) match {
-            case Arg.I(n) => f"$n%x"
-            case Arg.F(n) => getDoubleHex(n)
+          "(" + s + ")" + (convertGlobals(arg) match {
+            case Arg.I(n) => n.toString
+            case Arg.F(n) => n.toString
             case Arg.M(a) => f"$a%x"
-          }
-          str.split("(?<=\\G..)").reverse.take(s.toInt).foreach { cc =>
-            printByte(nextPrintOffset, Integer.parseInt(cc, 16).toByte)
-            nextPrintOffset += 1
-          }
+          })
         case Function(n) =>
           val Seq(arg) = args
-          line("// Function " + n.show + " (" + arg.toStr + ")")
+          "// Function " + n.show + " (" + arg.toStr + ")"
         case _ =>
           val opStr = op.toStr
-          line(offset.toHexString + ": " + opStr + " "*(12 - opStr.length) + args.map(convertGlobals(_).toStr).mkString(", "))
-          nextPrintOffset += 4
+          opStr + " "*(12 - opStr.length) + args.map(convertGlobals(_).toStr).mkString(", ")
       }
-    }
 
-    def getDoubleHex(value: Double): String = {
-      jl.Long.toHexString(jl.Double.doubleToRawLongBits(value))
+      line(offset.toHexString + ": " + str)
     }
-
-    def printByte(offset: Offset, byte: Byte): Unit = {
-      //line(offset.toHexString + ": 0x" + "%02x".format(byte))
-    }
-    */
 
     def convertVal(iv: nir.Val)(implicit allocator: Allocator): Arg = iv match { // For bytecode arguments
       case Val.True          => Arg.I(1)
@@ -545,7 +515,7 @@ object ByteCodeGen {
       case Arg.G(n)    => globalOffsets.get(n) match {
         case Some(o) => Arg.M(o)
         case None    =>
-          println("g " + n.show)
+          // println("g " + n.show)
           Arg.G(n)
         //unsupported(n)
       }
