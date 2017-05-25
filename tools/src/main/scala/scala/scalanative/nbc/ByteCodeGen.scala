@@ -99,34 +99,51 @@ object ByteCodeGen {
     def genGlobalDefn(name: nir.Global,
                       ty: nir.Type,
                       rhs: nir.Val): Unit = {
-      globalOffsets.put(name, nextOffset)
+      genGlobal(ty, rhs) match {
+        case (64, Arg.M(offset)) =>
+          globalOffsets.put(name, offset)
+        case (s, arg) =>
+          globalOffsets.put(name, nextOffset)
+          genBC(Data(s), Seq(arg))
+      }
 
-      genGlobal(ty, rhs)(name)
     }
 
-    def genGlobal(ty: nir.Type, v: nir.Val)(implicit name: nir.Global): Unit = { // TODO name not right when going deep
+    def genGlobal(ty: nir.Type, v: nir.Val): (Long, Arg) = { // TODO name not right when going deep
       ty match {
         case nir.Type.Struct(_,tys) => {
           val nir.Val.Struct(_, vals) = v
-          vals.zip(tys).foreach { case (inv, inty) =>
+          val toGen = vals.zip(tys).map { case (inv, inty) =>
             genGlobal(inty, inv)
           }
+          val structOffset = nextOffset
+          toGen.foreach { case (size, v) =>
+            genBC(Data(size), Seq(v))
+          }
+          (64, Arg.M(structOffset))
         }
 
-        case nir.Type.Array(aty,_) => v match {
+        case nir.Type.Array(aty, n) => v match {
           case nir.Val.Array(_, vs) =>
-            vs.foreach{ v =>
+            val toGen = vs.map{ v =>
               genGlobal(aty, v)
             }
+            val arrayOffset = nextOffset
+            toGen.foreach { case (size, v) =>
+              genBC(Data(size), Seq(v))
+            }
+            (64, Arg.M(arrayOffset))
 
           case nir.Val.Chars(s) => // TODO only 2 %f left
+            val charsOffset = nextOffset
             s.foreach { char =>
-              genGlobal(aty, Val.Short(char.toShort))
+              genBC(Data(16), Seq(Arg.I(char)))
             }
-            genGlobal(aty, Val.Short(0))
+            genBC(Data(16), Seq(Arg.I(0)))
+            (64, Arg.M(charsOffset))
         }
 
-        case _ => genBC(Data(MemoryLayout.sizeOf(ty) * 8), Seq(argFromVal(v)))
+        case _ => (MemoryLayout.sizeOf(ty) * 8, argFromVal(v))
       }
     }
 
@@ -135,6 +152,12 @@ object ByteCodeGen {
                         insts: Seq[Inst])
                        (implicit top: Top): Unit = {
       globalOffsets.put(name, nextOffset)
+
+      /*
+      if (name == Global.Member(Global.Top("scala.Array$"), "init")) {
+        insts.foreach(i => println(i.show))
+      }
+      */
 
       // Initialize register allocation
       nextReg = 0
@@ -272,7 +295,7 @@ object ByteCodeGen {
             case Val.Int(i) => i
             case Val.None   => 1
           }
-          genBytecode(Alloc, Seq(lhs, Val.Long(nb * MemoryLayout.sizeOf(ty))))
+          genBytecode(Alloc, Seq(lhs, Val.Long(nb * MemoryLayout.sizeOf(ty)))) // TODO size is 8 for pointer types
 
         case Op.Elem(ty, ptr, indexes) =>
           val size = MemoryLayout.sizeOf(ty)
@@ -348,7 +371,7 @@ object ByteCodeGen {
               (1, Type.Ptr, Seq(Val.Global(cls.rtti.name, Type.Ptr), Val.Long(MemoryLayout.sizeOf(cls.layout.struct))))
 
             case Op.Field(obj, FieldRef(cls, fld)) =>
-              (2, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.fields.indexOf(fld))))
+              (2, Type.Ptr, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr), Val.Int(cls.fields.indexOf(fld) + 1)))
 
             case Op.Method(obj, MethodRef(cls: Class, meth)) if meth.isVirtual =>
               (3, Type.Ptr, Seq(obj, Val.Int(cls.vtable.index(meth))))
@@ -381,7 +404,7 @@ object ByteCodeGen {
             case _ =>
               unsupported(op)
           }
-          args.foreach { arg =>
+          args.reverse.foreach { arg =>
             genBytecode(Push(convertSize(arg.ty)), Seq(arg))
           }
           genBC(Builtin(builtinId), Seq())
@@ -412,6 +435,12 @@ object ByteCodeGen {
         // 2. call function
         ptr match {
           case Val.Global(Global.Top("scalanative_init"), _) => genBytecode(Builtin(0), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc_raw"), _) =>
+            genBytecode(Builtin(8), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc_raw_atomic"), _) =>
+            genBytecode(Builtin(9), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.memset.p0i8.i64"), _) =>
+            genBytecode(Builtin(10), Seq())
           case _ => genBytecode(Call, Seq(ptr))
         }
 
@@ -426,21 +455,21 @@ object ByteCodeGen {
     }
 
     def genBC(op: Opcode, args: Seq[Arg]): Unit = {
-      val immSize = args.zipWithIndex.map { case (arg, idx) =>
-        arg match {
-          case Arg.R(r) if r < 8 => 0
-          case Arg.R(_) => 2
-          case Arg.L(_) => 8
-          case Arg.G(_) => 8
-          case Arg.I(_) => op.immSize(idx)
-          case Arg.F(_) => op.immSize(idx)
-        }
-      }.sum
-
       val size = op match {
         case Data(s)         => s/8
         case Function(_)     => 2
-        case _ => 2 + immSize
+        case _ =>
+          val immSize = args.zipWithIndex.map { case (arg, idx) =>
+            arg match {
+              case Arg.R(r) if r < 8 => 0
+              case Arg.R(_) => 2
+              case Arg.L(_) => 8
+              case Arg.G(_) => 8
+              case Arg.I(_) => op.immSize(idx)
+              case Arg.F(_) => op.immSize(idx)
+            }
+          }.sum
+          2 + immSize
       }
 
       val padding = op match {
