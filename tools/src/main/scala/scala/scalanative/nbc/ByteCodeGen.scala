@@ -256,10 +256,10 @@ object ByteCodeGen {
         case call: Op.Call =>
           genCall(lhs, call)
 
-        case Op.Load(ty, ptr) =>
+        case Op.Load(ty, ptr, _) =>
           genBytecode(Load(convertSize(ty)), Seq(lhs, ptr))
 
-        case Op.Store(ty, ptr, value) =>
+        case Op.Store(ty, ptr, value, _) =>
           genBytecode(Store(convertSize(ty)), Seq(ptr, value))
 
         case Op.Bin(bin, ty, l, r) =>

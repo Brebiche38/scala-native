@@ -186,9 +186,9 @@ object RegAlloc {
             op match {
               case Op.Call(_, ptr, args, _) => // TODO unwind is Unwind or None
                 ptr +: args
-              case Op.Load(_, ptr) =>
+              case Op.Load(_, ptr, _) =>
                 Seq(ptr)
-              case Op.Store(_, ptr, value) =>
+              case Op.Store(_, ptr, value, _) =>
                 Seq(ptr,value)
               case Op.Elem(_, ptr, indexes) =>
                 ptr +: indexes

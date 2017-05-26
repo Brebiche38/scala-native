@@ -1,10 +1,6 @@
 package scala.scalanative
 package sbtplugin
 
-<<<<<<< HEAD
-=======
-import util._
->>>>>>> Merged changes from Scalanative updates and begin assembly generation
 import sbtcrossproject.CrossPlugin.autoImport._
 
 import ScalaNativePlugin.autoImport._
@@ -12,16 +8,8 @@ import scalanative.nir
 import scalanative.tools
 import scalanative.io.VirtualDirectory
 import scalanative.util.{Scope => ResourceScope}
-<<<<<<< HEAD
 
 import sbt._, Keys._, complete.DefaultParsers._
-=======
-import sbt._
-import Keys._
-import complete.DefaultParsers._
-import xsbti.{Maybe, Position, Problem, Reporter, Severity}
-import KeyRanks.DTask
->>>>>>> Merged changes from Scalanative updates and begin assembly generation
 
 import scala.util.Try
 import System.{lineSeparator => nl}
