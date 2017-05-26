@@ -70,7 +70,7 @@ object Opcode {
     override def toBin(args: Seq[Arg]) = args match {
       case Seq(arg) => packImm(arg, immSize(0))
     }
-    override def immSize = _ => size.toInt / 8
+    override def immSize = _ => size.toInt
   }
 
   // Not in the final code (only for debug purposes)

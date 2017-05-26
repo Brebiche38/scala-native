@@ -99,52 +99,38 @@ object ByteCodeGen {
     def genGlobalDefn(name: nir.Global,
                       ty: nir.Type,
                       rhs: nir.Val): Unit = {
-      genGlobal(ty, rhs) match {
-        case (64, Arg.M(offset)) =>
-          globalOffsets.put(name, offset)
-        case (s, arg) =>
-          globalOffsets.put(name, nextOffset)
-          genBC(Data(s), Seq(arg))
+      def getArgs(v: nir.Val): Seq[Arg] = v match {
+        case nir.Val.Struct(_, vs) => vs flatMap getArgs
+        case nir.Val.Array(_, vs)  => vs flatMap getArgs
+        case nir.Val.Chars(s)      => s.map(Arg.I(_)) :+ Arg.I(0)
+        case _                     => Seq(argFromVal(v))
+      }
+      val args = getArgs(rhs)
+
+      val layout = MemoryLayout(Seq(ty))
+
+      def getTpes(tpe: MemoryLayout.PositionedType): Seq[MemoryLayout.Tpe] = tpe match {
+        case MemoryLayout.Tpe(size, offset, nir.Type.Array(arty, n)) =>
+          val elemsize = size/n
+          (for (i <- 0 until n) yield getTpes(MemoryLayout.Tpe(elemsize, offset + i * elemsize, arty))).flatten
+        case t :MemoryLayout.Tpe => Seq(t)
+        case _                   => Seq()
       }
 
-    }
+      val tpes = layout.tys.flatMap(getTpes)
 
-    def genGlobal(ty: nir.Type, v: nir.Val): (Long, Arg) = { // TODO name not right when going deep
-      ty match {
-        case nir.Type.Struct(_,tys) => {
-          val nir.Val.Struct(_, vals) = v
-          val toGen = vals.zip(tys).map { case (inv, inty) =>
-            genGlobal(inty, inv)
-          }
-          val structOffset = nextOffset
-          toGen.foreach { case (size, v) =>
-            genBC(Data(size), Seq(v))
-          }
-          (64, Arg.M(structOffset))
-        }
-
-        case nir.Type.Array(aty, n) => v match {
-          case nir.Val.Array(_, vs) =>
-            val toGen = vs.map{ v =>
-              genGlobal(aty, v)
-            }
-            val arrayOffset = nextOffset
-            toGen.foreach { case (size, v) =>
-              genBC(Data(size), Seq(v))
-            }
-            (64, Arg.M(arrayOffset))
-
-          case nir.Val.Chars(s) => // TODO only 2 %f left
-            val charsOffset = nextOffset
-            s.foreach { char =>
-              genBC(Data(16), Seq(Arg.I(char)))
-            }
-            genBC(Data(16), Seq(Arg.I(0)))
-            (64, Arg.M(charsOffset))
-        }
-
-        case _ => (MemoryLayout.sizeOf(ty) * 8, argFromVal(v))
+      val maxSize = tpes.map(t => t.size).max
+      if (nextOffset % maxSize != 0) {
+        nextOffset += maxSize - (nextOffset % maxSize)
       }
+      val mainOffset = nextOffset
+      nextOffset += layout.size
+
+      tpes.zip(args).foreach { case (MemoryLayout.Tpe(size, offset, _), arg) =>
+        bytecode.append((mainOffset + offset, Data(size), Seq(arg)))
+      }
+
+      globalOffsets.put(name, mainOffset)
     }
 
     def genFunctionDefn(name: Global,
@@ -456,7 +442,6 @@ object ByteCodeGen {
 
     def genBC(op: Opcode, args: Seq[Arg]): Unit = {
       val size = op match {
-        case Data(s)         => s/8
         case Function(_)     => 2
         case _ =>
           val immSize = args.zipWithIndex.map { case (arg, idx) =>
@@ -472,17 +457,9 @@ object ByteCodeGen {
           2 + immSize
       }
 
-      val padding = op match {
-        case Data(s) if s > 0 => (size - (nextOffset % size)) % size
-        case _                => 0
-      }
-      val offset = nextOffset + padding
-      nextOffset += padding + size
+      funBytecode.append((nextOffset, op, args))
 
-      (op match {
-        case _: Data => bytecode
-        case _       => funBytecode
-      }).append((offset, op, args))
+      nextOffset += size
     }
 
     def genBinary(in: Instr): Unit = {
@@ -508,7 +485,7 @@ object ByteCodeGen {
           "(" + s + ")" + (convertGlobals(arg) match {
             case Arg.I(n) => n.toString
             case Arg.F(n) => n.toString
-            case Arg.M(a) => f"$a%x"
+            case Arg.M(a) => f"0x$a%x"
           })
         case Function(n) =>
           val Seq(arg) = args
@@ -552,7 +529,7 @@ object ByteCodeGen {
     }
 
     def genUnsupported()(implicit allocator: Allocator): Unit = {
-      Seq(genBytecode(Halt, Seq()))
+      genBytecode(Halt, Seq())
     }
 
     def isReturnable(v: nir.Val): Boolean = !(v == nir.Val.None || v == nir.Val.Unit)
