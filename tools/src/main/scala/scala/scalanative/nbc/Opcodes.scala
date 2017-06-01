@@ -46,7 +46,8 @@ object Opcode {
   }
   def packImmI(i: Long, s: Int): Seq[Byte] = {
     val arr = BigInt(i).toByteArray.takeRight(s)
-    val padded = if (arr.length < s) Array.fill(s - arr.length)( 0x00.toByte ) ++ arr else arr
+    val fill = if (i < 0) 0xff.toByte else 0x00.toByte
+    val padded = if (arr.length < s) Array.fill(s - arr.length)(fill) ++ arr else arr
     padded.reverse
   }
 
@@ -112,7 +113,7 @@ object Opcode {
           (packSize(size), 2),
           (packArg(arg1), 4),
           (packArg(arg2), 4)
-        )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
+        )) ++ packImm(arg1, immSize(0)) ++ packImm(arg2, immSize(1))
     }
     override def immSize = _ => size / 8
   }
@@ -155,12 +156,24 @@ object Opcode {
   }
   final case class Shl (override val size: Int) extends Arith(size) {
     override def opcode = 0x0f
+    override def immSize = {
+      case 0 => size / 8
+      case 1 => 1
+    }
   }
   final case class LShr(override val size: Int) extends Arith(size) {
     override def opcode = 0x13
+    override def immSize = {
+      case 0 => size / 8
+      case 1 => 1
+    }
   }
   final case class AShr(override val size: Int) extends Arith(size) {
     override def opcode = 0x17
+    override def immSize = {
+      case 0 => size / 8
+      case 1 => 1
+    }
   }
   final case class And (override val size: Int) extends Arith(size) {
     override def opcode = 0x0c
@@ -426,8 +439,9 @@ object Opcode {
         (0x0, 8) // Padding
       ))
   }
-  final case object Halt extends CF {
+  final case class Halt(val reason: String) extends CF {
     override def opcode = 0xdf
+    override def toStr: String = super.toStr + " (" + reason + ")"
     override def toBin(args: Seq[Arg]): Seq[Byte] =
       pack(Seq(
         (opcode, 8),
@@ -520,17 +534,17 @@ object Opcode {
       //case nir.Type.None          => 0
       case nir.Type.Void          => 0
       case nir.Type.Vararg        => 64
-      case nir.Type.Ptr           => 64 // TODO assume 64 bits
+      case nir.Type.Ptr           => 64
       case nir.Type.I(s, _)       => if (s == 1) 8 else s
       case nir.Type.F(s)          => s
       case nir.Type.Unit          => 0
       case nir.Type.Nothing       => 0
-      case nir.Type.Function(_,_) => 64 // pointer
-      case nir.Type.Struct(_,_)   => 64 // TODO pointer not sufficient ?
-      case nir.Type.Array(_,_)    => 64 // TODO pointer not sufficient ?
-      case nir.Type.Class(_)      => 64 // TODO no!
-      case nir.Type.Trait(_)      => 64 // TODO no!
-      case nir.Type.Module(_)     => 64 // TODO no!
+      case nir.Type.Function(_,_) => 64
+      case nir.Type.Struct(_,_)   => 64
+      case nir.Type.Array(_,_)    => 64
+      case nir.Type.Class(_)      => 64
+      case nir.Type.Trait(_)      => 64
+      case nir.Type.Module(_)     => 64
       case _                      => unsupported(ty)
     }
   }

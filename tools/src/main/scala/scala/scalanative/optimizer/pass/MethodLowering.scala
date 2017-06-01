@@ -25,7 +25,7 @@ class MethodLowering(implicit fresh: Fresh, top: Top) extends Pass {
           Op.Elem(cls.rtti.struct,
                   typeptr,
                   Seq(Val.Int(0),
-                      Val.Int(5), // index of vtable in type struct
+                      Val.Int(6), // index of vtable in type struct
                       Val.Int(vindex))))
 
         let(n, Op.Load(Type.Ptr, methptrptr))

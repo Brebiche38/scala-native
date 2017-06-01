@@ -109,6 +109,7 @@ object ByteCodeGen {
 
       val layout = MemoryLayout(Seq(ty))
 
+      /*
       def getTpes(tpe: MemoryLayout.PositionedType): Seq[MemoryLayout.Tpe] = tpe match {
         case MemoryLayout.Tpe(size, offset, nir.Type.Array(arty, n)) =>
           val elemsize = size/n
@@ -116,8 +117,20 @@ object ByteCodeGen {
         case t :MemoryLayout.Tpe => Seq(t)
         case _                   => Seq()
       }
+      */
 
-      val tpes = layout.tys.flatMap(getTpes)
+      val tpes = layout.tys.filter {
+        case _: MemoryLayout.Tpe => true
+        case _                   => false
+      }
+
+      /*
+      if (args.length != tpes.length) {
+        println(args)
+        println(tpes)
+      }
+      println(args.length, tpes.length)
+      */
 
       val maxSize = tpes.map(t => t.size).max
       if (nextOffset % maxSize != 0) {
@@ -125,6 +138,11 @@ object ByteCodeGen {
       }
       val mainOffset = nextOffset
       nextOffset += layout.size
+
+      if (name == Global.Top("__dispatch")) {
+        val nir.Val.Array(_, vals) = rhs
+        println(mainOffset.toHexString, vals.length)
+      }
 
       tpes.zip(args).foreach { case (MemoryLayout.Tpe(size, offset, _), arg) =>
         bytecode.append((mainOffset + offset, Data(size), Seq(arg)))
@@ -140,7 +158,7 @@ object ByteCodeGen {
       globalOffsets.put(name, nextOffset)
 
       /*
-      if (name == Global.Member(Global.Top("scala.Array$"), "init")) {
+      if (name == Global.Member(Global.Top("scala.runtime.ScalaRunTime$"), "array$underscore$length_java.lang.Object_i32")) {
         insts.foreach(i => println(i.show))
       }
       */
@@ -155,6 +173,11 @@ object ByteCodeGen {
       val cfg = CFG(insts)
 
       val (allocator, spilledRegs) = RegAlloc.allocateRegisters(insts, cfg)
+
+      /*
+      if (spilledRegs > 40)
+        println(name.show, spilledRegs)
+      */
 
       genBC(Function(name), Seq(Arg.I(spilledRegs)))
 
@@ -189,12 +212,12 @@ object ByteCodeGen {
           genBytecode(Pop(convertSize(p.ty)), Seq(p))
         }
       } else if (block.isExceptionHandler) {
-        genUnsupported()
+        genUnsupported("exception handler")
       }
 
 
       if (block.isRegular) {
-        insts.foreach(genInst)
+        insts.init.foreach(genInst)
 
         block.outEdges.foreach {
           case Edge(_, _ @ Block(_, params, _, _), Next.Label(_, args)) =>
@@ -205,6 +228,8 @@ object ByteCodeGen {
             }
           case _ => ()
         }
+
+        genInst(insts.last)
       }
     }
 
@@ -216,7 +241,7 @@ object ByteCodeGen {
         ()
 
       case Inst.Unreachable =>
-        genBytecode(Halt, Seq())
+        genUnsupported("unreachable")
 
       case Inst.Ret(value) =>
         if (isReturnable(value.ty)) {
@@ -232,7 +257,7 @@ object ByteCodeGen {
         genBC(Jump, Seq(getNext(elsep)))
 
       case Inst.Switch(scrut, default, cases) =>
-        genUnsupported() // TODO
+        genUnsupported("switch") // TODO
         /*
         cases.zipWithIndex.foreach { case (next, id) =>
           genBC(JumpIf, Seq(Arg.I(id), convertVal(scrut), getNext(next)))
@@ -245,7 +270,7 @@ object ByteCodeGen {
         ()
 
       case Inst.Throw(_, _) =>
-        genUnsupported()
+        genUnsupported("throw")
     }
 
     def genLet(inst: Inst.Let)(implicit allocator: Allocator, top: Top): Unit = {
@@ -278,70 +303,74 @@ object ByteCodeGen {
 
         case Op.Stackalloc(ty, n) =>
           val nb = n match {
-            case Val.Int(i) => i
+            case Val.Long(i) => i
             case Val.None   => 1
           }
-          genBytecode(Alloc, Seq(lhs, Val.Long(nb * MemoryLayout.sizeOf(ty)))) // TODO size is 8 for pointer types
+          val size = {
+            val pureSize = MemoryLayout.sizeOf(ty)
+            val alignment = MemoryLayout.findMax(Seq(ty))
+            if (pureSize % alignment == 0) pureSize
+            else pureSize + (alignment - pureSize % alignment)
+          }
+          val bytesSize = nb * size
+          val wordsSize = bytesSize / 8 + (if (bytesSize % 8 == 0) 0 else 1)
+          genBytecode(Alloc, Seq(lhs, Val.Long(wordsSize)))
 
         case Op.Elem(ty, ptr, indexes) =>
+          val layout = MemoryLayout(Seq(ty))
           val size = MemoryLayout.sizeOf(ty)
-
-          // TODO simplify with MemoryLayout
-          val firstComputable = indexes.head match {
-            case _: Val.Byte   => true
-            case _: Val.Short  => true
-            case _: Val.Int    => true
-            case _: Val.Long   => true
-            case _: Val.Local  => false
-            case _: Val.Global => false
-          }
-
-          val allComputable = indexes.tail.forall {
-            case _: Val.Byte   => true
-            case _: Val.Short  => true
-            case _: Val.Int    => true
-            case _: Val.Long   => true
-            case _: Val.Local  => false
-            case _: Val.Global => false
-          }
 
           def value(v: Val): Long = v match {
             case Val.Byte(v)   => v
             case Val.Short(v)  => v
             case Val.Int(v)    => v
             case Val.Long(v)   => v
+            case _             => 0
+          }
+          val offsets = layout.tys.collect {
+            case MemoryLayout.Tpe(_, offset, _) => offset
+          }
+          val tpeIndex = MemoryLayout.elemIndex(ty, indexes.tail.map(value))
+          val inOffset = offsets(tpeIndex.toInt)
+
+          def computable(idx: Val) = idx match {
+            case _: Val.Byte   => true
+            case _: Val.Short  => true
+            case _: Val.Int    => true
+            case _: Val.Long   => true
+            case _: Val.Local  => false
+            case _: Val.Global => false
           }
 
-          def fullSize(ty: Type): Int = ty match {
-            case Type.Struct(_, tys) => tys.map(fullSize).sum
-            case _ => 1
-          }
-          def sizeUntil(ty: Type, idx: Long): Int = ty match {
-            case Type.Struct(_, tys) => tys.take(idx.toInt).map(fullSize).sum
-          }
-          def indexOf(ty: Type, idxs: Seq[Long]): Int = (ty, idxs) match {
-            case (Type.Struct(_, tys), id +: ids) => sizeUntil(ty, id) + indexOf(tys(id.toInt), ids)
-            case (_, Nil)                         => 0
-          }
-
-          if (!allComputable) {
-            genUnsupported() // For now not supported
-          } else if (firstComputable) { // Everything is known at compile time
+          if (!indexes.tail.forall(computable)) {
+            genUnsupported("elem of variable indexes") // TODO
+          } else if (computable(indexes.head)) { // Everything is known at compile time
             val outOffset = value(indexes.head) * size
-            val inOffset = ty match {
-              case Type.Struct(_, tys) => MemoryLayout(tys).tys(indexOf(ty, indexes.tail.map(value))).offset
-              case _                   => 0
-            }
             val offset = outOffset + inOffset
+
+            genBytecode(Push(64), Seq(Val.Long(0)))
+            genBytecode(Push(64), Seq(Val.Long(offset)))
+            genBytecode(Push(64), Seq(ptr))
+
             genBytecode(Mov(64), Seq(lhs, ptr))
             genBytecode(Add(64), Seq(lhs, Val.Long(offset)))
+
+            genBytecode(Push(64), Seq(lhs))
+            genBytecode(Builtin(18), Seq())
           } else { // We don't know the first offset at compile time
-            val inOffset = indexOf(ty, indexes.tail.map(value))
+            genBytecode(Push(64), Seq(Val.Long(size)))
+            genBytecode(Push(64), Seq(indexes.head))
+            genBytecode(Push(64), Seq(ptr))
+
             genBytecode(Mov(64), Seq(lhs, Val.Long(size)))
             genBytecode(Mul(64), Seq(lhs, indexes.head))
+            genBytecode(Add(64), Seq(lhs, ptr))
             if (inOffset != 0) {
               genBytecode(Add(64), Seq(lhs, Val.Long(inOffset)))
             }
+
+            genBytecode(Push(64), Seq(lhs))
+            genBytecode(Builtin(18), Seq())
           }
 
         case Op.Sizeof(ty) =>
@@ -350,6 +379,9 @@ object ByteCodeGen {
 
         case Op.As(ty, obj) =>
           genBytecode(Mov(convertSize(ty)), Seq(lhs, obj))
+
+        case Op.Copy(value) =>
+          genBytecode(Mov(convertSize(value.ty)), Seq(lhs, value))
 
         case _ => {
           val (builtinId, retty, args): (Int, Type, Seq[Val]) = op match {
@@ -364,11 +396,13 @@ object ByteCodeGen {
             case Op.Method(obj, MethodRef(cls: Class, meth)) if meth.isStatic =>
               (4, Type.Ptr, Seq(Val.Global(meth.name, Type.Ptr)))
             case Op.Method(obj, MethodRef(trt: Trait, meth)) =>
-              (5, Type.Ptr, Seq(obj, top.tables.dispatchVal, Val.Int(top.tables.dispatchOffset(meth.id))))
+              //if (meth.id == 290) println(obj.show, trt.name.show, meth.name.show)
+              (5, Type.Ptr, Seq(obj, top.tables.dispatchVal, Val.Int(meth.id), Val.Int(top.tables.dispatchOffset(meth.id))))
 
             case Op.Is(ClassRef(cls), obj) =>
                 (6, Type.Bool, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr)))
             case Op.Is(TraitRef(trt), obj) =>
+                genUnsupported("is trait")
                 (7, Type.Bool, Seq(obj, top.tables.classHasTraitVal, Val.Int(trt.id)))
 
             /*
@@ -421,12 +455,32 @@ object ByteCodeGen {
         // 2. call function
         ptr match {
           case Val.Global(Global.Top("scalanative_init"), _) => genBytecode(Builtin(0), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc_raw"), _) =>
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc"), _) =>
             genBytecode(Builtin(8), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc_raw_atomic"), _) =>
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc_atomic"), _) =>
             genBytecode(Builtin(9), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.memset.p0i8.i64"), _) =>
             genBytecode(Builtin(10), Seq())
+            /*
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_get_context"), _) =>
+            genBytecode(Builtin(11), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_init_local"), _) =>
+            genBytecode(Builtin(12), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_step"), _) =>
+            genBytecode(Builtin(13), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_get_proc_name"), _) =>
+            genBytecode(Builtin(14), Seq())
+            */
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.ctpop.i32"), _) =>
+            genBytecode(Builtin(15), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.bswap.i32"), _) =>
+            genBytecode(Builtin(16), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.ctlz.i32"), _) =>
+            genBytecode(Builtin(17), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Platform$"), "extern.scalanative_platform_is_windows"), _) =>
+            genBytecode(Builtin(19), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.scalanative_environ"), _) =>
+            genBytecode(Builtin(20), Seq())
           case _ => genBytecode(Call, Seq(ptr))
         }
 
@@ -464,6 +518,10 @@ object ByteCodeGen {
 
     def genBinary(in: Instr): Unit = {
       val (offset, op, args) = in
+
+      //println(offset, op, args)
+
+      assert (bytesPut <= offset)
 
       while(bytesPut < offset) {
         binbuf.put(0xde.toByte)
@@ -528,8 +586,8 @@ object ByteCodeGen {
       case _           => arg
     }
 
-    def genUnsupported()(implicit allocator: Allocator): Unit = {
-      genBytecode(Halt, Seq())
+    def genUnsupported(reason: String)(implicit allocator: Allocator): Unit = {
+      genBytecode(Halt(reason), Seq())
     }
 
     def isReturnable(v: nir.Val): Boolean = !(v == nir.Val.None || v == nir.Val.Unit)

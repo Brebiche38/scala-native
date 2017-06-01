@@ -30,4 +30,9 @@ class FieldLayout(cls: Class) {
   val referenceOffsetsValue =
     Val.Struct(Global.None,
                Seq(Val.Const(Val.Array(Type.Long, layout.offsetArray))))
+  val offsetTableTy =
+    Type.Struct(Global.None, Seq(Type.Ptr))
+  val offsetTableValue =
+    Val.Struct(Global.None,
+      Seq(Val.Const(Val.Array(Type.Long, layout.offsetTable(struct.tys)))))
 }

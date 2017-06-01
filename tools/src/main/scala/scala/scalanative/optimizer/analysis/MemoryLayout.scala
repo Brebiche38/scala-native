@@ -14,6 +14,24 @@ final case class MemoryLayout(size: Long, tys: List[PositionedType]) {
 
     ptrOffsets :+ Val.Long(-1)
   }
+
+  def offsetTable(topTys: Seq[Type]): Seq[Val.Long] = {
+    val (sum, firstTpes) = topTys.foldLeft((0L, Seq[Long]())) {
+      case ((idx, prevIdxs), ty) =>
+        (idx + MemoryLayout.elems(ty), prevIdxs :+ idx)
+    }
+    val tpeOffsets = tys.collect {
+      case MemoryLayout.Tpe(_, off, _) => off
+    }
+    if (tpeOffsets.length != sum) {
+      println()
+      println(topTys)
+      println(tys)
+      println(tpeOffsets)
+      println(topTys.map(x => (x, MemoryLayout.elems(x))))
+    }
+    firstTpes.map(x => Val.Long(tpeOffsets(x.toInt))) :+ Val.Long(-1)
+  }
 }
 
 object MemoryLayout {
@@ -29,12 +47,33 @@ object MemoryLayout {
 
   def sizeOf(ty: Type): Long = ty match {
     case primitive: Type.Primitive => math.max(primitive.width / 8, 1)
-    case Type.Array(arrTy, n)      => sizeOf(arrTy) * n
+    case Type.Array(arrTy, n)      => MemoryLayout(Seq.fill(n)(arrTy)).size
     case Type.Struct(_, tys)       => MemoryLayout(tys).size
     case Type.Nothing | Type.Ptr | _: Type.Trait | _: Type.Module |
         _: Type.Class =>
       8
     case _ => unsupported(s"sizeOf $ty")
+  }
+
+  def elems(ty: Type): Long = ty match {
+    case Type.Struct(_, tys) => tys.map(elems).sum
+    case Type.Array(ty, n)   => n * elems(ty)
+    case _                   => 1
+  }
+
+  def elemIndex(ty: Type, ids: Seq[Long]): Long = (ty, ids) match {
+    case (Type.Struct(_, tys), id +: idxs) =>
+      tys.take(id.toInt).map(elems).sum + elemIndex(tys(id.toInt), idxs)
+    case (Type.Array(innerTy, _), id +: idxs) =>
+      elems(innerTy) * id + elemIndex(innerTy, idxs)
+    case (_, Seq()) =>
+      0
+  }
+
+  def findMax(tys: Seq[Type]): Long = tys.foldLeft(0L) {
+    case (acc, Type.Struct(_, innerTy)) => math.max(acc, findMax(innerTy))
+    case (acc, Type.Array(innerTy, _))  => math.max(acc, sizeOf(innerTy))
+    case (acc, ty)                      => math.max(acc, sizeOf(ty))
   }
 
   def apply(tys: Seq[Type]): MemoryLayout = {
@@ -49,11 +88,6 @@ object MemoryLayout {
     }
 
     val sizes = tys.map(sizeOf)
-
-    def findMax(tys: Seq[Type]): Long = tys.foldLeft(0L) {
-      case (acc, Type.Struct(_, innerTy)) => math.max(acc, findMax(innerTy))
-      case (acc, ty)                      => math.max(acc, sizeOf(ty))
-    }
 
     val maxSize = findMax(tys)
 
@@ -70,6 +104,10 @@ object MemoryLayout {
 
               (index + pad + innerSize,
                innerTys ::: Padding(pad, index) :: potys)
+
+            case Type.Array(ty, n) =>
+              val (innerSize, innerTys) = impl(Seq.fill(n)(ty), index)
+              (index + innerSize, innerTys ::: potys)
 
             case _ =>
               val pad = if (index % size == 0) 0 else size - (index % size)

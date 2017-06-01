@@ -18,6 +18,7 @@ class RuntimeTypeInformation(node: Scope) {
             Type.Struct(Global.None, Seq(Type.Int, Type.Int)), // range
             cls.dynmap.ty,
             cls.layout.referenceOffsetsTy,
+            cls.layout.offsetTableTy,
             cls.vtable.ty)
       )
     case _ =>
@@ -44,6 +45,7 @@ class RuntimeTypeInformation(node: Scope) {
                        Seq(Val.Int(cls.range.head), Val.Int(cls.range.last))),
             cls.dynmap.value,
             cls.layout.referenceOffsetsValue,
+            cls.layout.offsetTableValue,
             cls.vtable.value
           )
         )
