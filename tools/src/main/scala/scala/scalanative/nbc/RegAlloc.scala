@@ -12,9 +12,14 @@ object RegAlloc {
 
   val stats = mutable.Map.empty[Int, Int]
 
-  def allocateRegisters(insts: Seq[Inst], cfg: CFG): (Allocator, Int) = {
+  def allocateRegisters(insts: Seq[Inst], cfg: CFG, printIntervals: Boolean = false): (Allocator, Int) = {
     // Interval computing
     val intervals = buildIntervals(cfg, insts.size)
+    if (printIntervals) {
+      intervals.foreach {
+        case (Local("src", id), RegAlloc.Interval(ranges)) => println(id, ranges)
+      }
+    }
 
     // Linear scan algorithm
     var unhandled = intervals.toSeq.sortBy {
@@ -80,6 +85,7 @@ object RegAlloc {
 
       val (reg, maxVal) = freeUntil.maxBy(_._2)
       if (maxVal != 0 && current._2.ranges.last._2 < maxVal) {
+        //println("putting", current._1.show, Arg.R(reg).toStr)
         allocator.put(current._1, Arg.R(reg))
       } else {
         // Allocation failed, allocate blocked regs
@@ -106,12 +112,23 @@ object RegAlloc {
 
         val (reg, maxVal) = nextUse.max
         if (current._2.start < maxVal) {
+          //println("putting", current._1.show, Arg.R(nextSpill).toStr)
           allocator.put(current._1, Arg.R(nextSpill))
           nextSpill += 1
         } else {
+          //println("updating", )
+          allocator.filter {
+            case (_, Arg.R(r)) => r == reg
+          }.foreach { case (local, _) =>
+            allocator.update(local, Arg.R(nextSpill))
+            //nextSpill += 1
+          }
+          /*
           allocator.update(allocator.find {
             case (_, Arg.R(r)) => r == reg
           }.head._1, Arg.R(nextSpill))
+          */
+          //println("putting", current._1.show, Arg.R(reg).toStr)
           allocator.put(current._1, Arg.R(reg))
           nextSpill += 1
         }
@@ -231,7 +248,7 @@ object RegAlloc {
               case Op.Unbox(_, obj) =>
                 Seq(obj)
             }
-          case Inst.If(v, _, _) =>Seq(v)
+          case Inst.If(v, _, _) => Seq(v)
           case Inst.Switch(v, _, _) => Seq(v)
           case Inst.Ret(v) => Seq(v)
           case Inst.Throw(v, _) => Seq(v)
@@ -271,7 +288,7 @@ object RegAlloc {
     intervals.toMap
   }
 
-  class Interval(val ranges: Seq[(Int, Int)]) {
+  case class Interval(val ranges: Seq[(Int, Int)]) {
     def start: Int = ranges.head._1
     def end: Int = ranges.last._2
 

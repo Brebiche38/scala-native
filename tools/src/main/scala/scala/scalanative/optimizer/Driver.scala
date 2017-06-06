@@ -66,6 +66,7 @@ object Driver {
   )
 
   private val interactivePasses = Seq(
+    pass.SwitchLowering,
 //    pass.DynmethodLowering,
 //    pass.ExternHoisting
     pass.ModuleLowering, // TODO big...

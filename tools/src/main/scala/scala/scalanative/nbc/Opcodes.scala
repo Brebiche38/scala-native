@@ -106,11 +106,12 @@ object Opcode {
   sealed abstract class Arith(val size: Int) extends Opcode {
     override def toStr: String = super.toStr + "." + size.toString
     def opcode: Int
+    def floatingPoint: Boolean = false
     override def toBin(args: Seq[Arg]) = args match {
       case Seq(arg1, arg2) =>
         pack(Seq(
           (opcode, 6),
-          (packSize(size), 2),
+          (if (floatingPoint) packSizeF(size) else packSize(size), 2),
           (packArg(arg1), 4),
           (packArg(arg2), 4)
         )) ++ packImm(arg1, immSize(0)) ++ packImm(arg2, immSize(1))
@@ -123,18 +124,21 @@ object Opcode {
   }
   final case class FAdd(override val size: Int) extends Arith(size) {
     override def opcode = 0x14
+    override def floatingPoint: Boolean = true
   }
   final case class Sub (override val size: Int) extends Arith(size) {
     override def opcode = 0x11
   }
   final case class FSub(override val size: Int) extends Arith(size) {
     override def opcode = 0x15
+    override def floatingPoint: Boolean = true
   }
   final case class Mul (override val size: Int) extends Arith(size) {
     override def opcode = 0x12
   }
   final case class FMul(override val size: Int) extends Arith(size) {
     override def opcode = 0x16
+    override def floatingPoint: Boolean = true
   }
   final case class Div (override val size: Int) extends Arith(size) {
     override def opcode = 0x18
@@ -144,6 +148,7 @@ object Opcode {
   }
   final case class FDiv(override val size: Int) extends Arith(size) {
     override def opcode = 0x1a
+    override def floatingPoint: Boolean = true
   }
   final case class Rem (override val size: Int) extends Arith(size) {
     override def opcode = 0x1c
@@ -153,6 +158,7 @@ object Opcode {
   }
   final case class FRem(override val size: Int) extends Arith(size) {
     override def opcode = 0x1e
+    override def floatingPoint: Boolean = true
   }
   final case class Shl (override val size: Int) extends Arith(size) {
     override def opcode = 0x0f
@@ -212,12 +218,13 @@ object Opcode {
   sealed abstract class Comp(val size: Int) extends Opcode {
     override def toStr: String = super.toStr + "." + size.toString
     def opcode: Int
+    def floatingPoint: Boolean = false
     override def toBin(args: Seq[Arg]) = args match {
       case Seq(arg1, arg2) =>
         pack(Seq(
           (0xe, 4),
           (opcode, 2),
-          (packSize(size), 2),
+          (if (floatingPoint) packSizeF(size) else packSize(size), 2),
           (packArg(arg1), 4),
           (packArg(arg2), 4)
         )) ++ packImm(arg1, size/8) ++ packImm(arg2, size/8)
@@ -232,6 +239,7 @@ object Opcode {
   }
   final case class FCmp(override val size: Int) extends Comp(size) {
     override def opcode = 0x2
+    override def floatingPoint: Boolean = true
   }
 
   sealed abstract class SetIf extends Opcode {
@@ -308,12 +316,12 @@ object Opcode {
           (opcode, 6),
           (packArg(arg1), 4),
           (packArg(arg2), 4)
-        )) ++ packImm(arg1, before/8) ++ packImm(arg2, after/8)
+        )) ++ packImm(arg1, immSize(0)) ++ packImm(arg2, immSize(1))
     }
 
     override def immSize = {
-      case 0 => before / 8
-      case 1 => after / 8
+      case 0 => after / 8
+      case 1 => before / 8
     }
   }
   final case class Trunc(override val before: Int, override val after: Int) extends Conv(before, after) {
@@ -325,6 +333,11 @@ object Opcode {
       case (64, 16) => 0x4
       case (64, 32) => 0x5
     })
+
+    override def immSize: (Int) => Int = {
+      case 0 => super.immSize(0)
+      case 1 => after / 8
+    }
   }
   final case class Zext(override val before: Int, override val after: Int) extends Conv(before, after) {
     override def opcode = 0x10 + ((before, after) match {
@@ -439,6 +452,14 @@ object Opcode {
         (0x0, 8) // Padding
       ))
   }
+  final case object FinalRet extends CF {
+    override def opcode = 0xd1
+    override def toBin(args: Seq[Arg]): Seq[Byte] =
+      pack(Seq(
+        (opcode, 8),
+        (0x0, 8) // Padding
+      ))
+  }
   final case class Halt(val reason: String) extends CF {
     override def opcode = 0xdf
     override def toStr: String = super.toStr + " (" + reason + ")"
@@ -532,13 +553,13 @@ object Opcode {
   def convertSize(ty: nir.Type): Int = { // TODO complex types
     ty match {
       //case nir.Type.None          => 0
-      case nir.Type.Void          => 0
+      case nir.Type.Void          => 64 // Dummy return
       case nir.Type.Vararg        => 64
       case nir.Type.Ptr           => 64
       case nir.Type.I(s, _)       => if (s == 1) 8 else s
       case nir.Type.F(s)          => s
-      case nir.Type.Unit          => 0
-      case nir.Type.Nothing       => 0
+      case nir.Type.Unit          => 64
+      case nir.Type.Nothing       => 64
       case nir.Type.Function(_,_) => 64
       case nir.Type.Struct(_,_)   => 64
       case nir.Type.Array(_,_)    => 64
