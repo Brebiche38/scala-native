@@ -320,13 +320,13 @@ object ByteCodeGen {
             case Op.Method(obj, MethodRef(cls: Class, meth)) if meth.isVirtual =>
               (3, Type.Ptr, Seq(obj, Val.Int(cls.vtable.index(meth))))
             case Op.Method(obj, MethodRef(trt: Trait, meth)) =>
-              (5, Type.Ptr, Seq(obj, top.tables.dispatchVal, Val.Int(meth.id), Val.Int(top.tables.dispatchOffset(meth.id))))
+              (4, Type.Ptr, Seq(obj, top.tables.dispatchVal, Val.Int(meth.id), Val.Int(top.tables.dispatchOffset(meth.id))))
 
             case Op.Is(ClassRef(cls), obj) =>
-              (6, Type.Bool, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr)))
+              (5, Type.Bool, Seq(obj, Val.Global(cls.rtti.name, Type.Ptr)))
             case Op.Is(TraitRef(trt), obj) =>
               genUnsupported("is trait")
-              (7, Type.Bool, Seq(obj, top.tables.classHasTraitVal, Val.Int(trt.id)))
+              (6, Type.Bool, Seq(obj, top.tables.classHasTraitVal, Val.Int(trt.id)))
           }
 
           // Generate builtin call
@@ -353,45 +353,39 @@ object ByteCodeGen {
           case Val.Global(Global.Top("scalanative_init"), _) =>
             genBytecode(Builtin(0), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc"), _) =>
-            genBytecode(Builtin(8), Seq())
+            genBytecode(Builtin(1), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.GC$"), "extern.scalanative_alloc_atomic"), _) =>
-            genBytecode(Builtin(9), Seq())
+            genBytecode(Builtin(1), Seq())
+
           case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.memset.p0i8.i64"), _) =>
-            genBytecode(Builtin(10), Seq())
-            /*
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_get_context"), _) =>
-            genBytecode(Builtin(11), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_init_local"), _) =>
-            genBytecode(Builtin(12), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_step"), _) =>
-            genBytecode(Builtin(13), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.unwind$"), "extern.scalanative_unwind_get_proc_name"), _) =>
-            genBytecode(Builtin(14), Seq())
-            */
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.ctpop.i32"), _) =>
-            genBytecode(Builtin(15), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.bswap.i32"), _) =>
-            genBytecode(Builtin(16), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.ctlz.i32"), _) =>
-            genBytecode(Builtin(17), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Platform$"), "extern.scalanative_platform_is_windows"), _) =>
-            genBytecode(Builtin(19), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.scalanative_environ"), _) =>
-            genBytecode(Builtin(20), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.native.string$"), "extern.strlen"), _) =>
-            genBytecode(Builtin(21), Seq())
+            genBytecode(Builtin(7), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.memmove.p0i8.p0i8.i64"), _) =>
-            genBytecode(Builtin(22), Seq())
+            genBytecode(Builtin(8), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.ctpop.i32"), _) =>
+            genBytecode(Builtin(9), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.bswap.i32"), _) =>
+            genBytecode(Builtin(10), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Intrinsics$"), "extern.llvm.ctlz.i32"), _) =>
+            genBytecode(Builtin(11), Seq())
+
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.Platform$"), "extern.scalanative_platform_is_windows"), _) =>
+            genBytecode(Builtin(12), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.native.string$"), "extern.strlen"), _) =>
+            genBytecode(Builtin(13), Seq())
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.scalanative_environ"), _) =>
+            genBytecode(Builtin(14), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.scalanative_stdin_fileno"), _) =>
-            genBytecode(Builtin(25), Seq())
+            genBytecode(Builtin(15), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.scalanative_stdout_fileno"), _) =>
-            genBytecode(Builtin(26), Seq())
+            genBytecode(Builtin(16), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.scalanative_stderr_fileno"), _) =>
-            genBytecode(Builtin(27), Seq())
-          case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.write"), _) =>
-            genBytecode(Builtin(28), Seq())
+            genBytecode(Builtin(17), Seq())
           case Val.Global(Global.Member(Global.Top("scala.scalanative.runtime.time$"), "extern.scalanative_nano_time"), _) =>
-            genBytecode(Builtin(29), Seq())
+            genBytecode(Builtin(18), Seq())
+
+          case Val.Global(Global.Member(Global.Top("scala.scalanative.posix.unistd$"), "extern.write"), _) =>
+            genBytecode(Builtin(19), Seq())
+
           case _ => // Regular call
             genBytecode(Call, Seq(ptr))
         }
