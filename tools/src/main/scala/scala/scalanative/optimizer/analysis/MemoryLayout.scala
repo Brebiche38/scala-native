@@ -23,13 +23,6 @@ final case class MemoryLayout(size: Long, tys: List[PositionedType]) {
     val tpeOffsets = tys.collect {
       case MemoryLayout.Tpe(_, off, _) => off
     }
-    if (tpeOffsets.length != sum) {
-      println()
-      println(topTys)
-      println(tys)
-      println(tpeOffsets)
-      println(topTys.map(x => (x, MemoryLayout.elems(x))))
-    }
     firstTpes.map(x => Val.Long(tpeOffsets(x.toInt))) :+ Val.Long(-1)
   }
 }

@@ -273,11 +273,6 @@ object ClassHierarchy {
       var id = 0
 
       def loop(node: Class): Unit = {
-        /*
-        if (id == 0x23f) {
-          println(node.name.show)
-        }
-        */
         val start = id
         id += 1
         node.subclasses.foreach(loop)
@@ -294,18 +289,6 @@ object ClassHierarchy {
       cls.layout = new FieldLayout(cls)
       cls.dynmap = new DynamicHashMap(cls, dyns)
       cls.rtti = new RuntimeTypeInformation(cls)
-      /*
-      if (cls.id == 0x23f) {
-        println(cls.name.show)
-        println(cls.layout.entries.map(x => (x.name, x.ty)))
-      }
-      */
-      /*if (cls.name == Global.Top("scala.scalanative.runtime.Array")) {
-        println("methods")
-        cls.methods.foreach(meth => println(meth.name.show))
-        println("vtable")
-        cls.vtable.entries.foreach(meth => println(meth.name.show))
-      }*/
     }
 
     def completeTop(): Unit = {

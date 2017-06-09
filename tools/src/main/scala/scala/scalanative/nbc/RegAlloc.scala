@@ -10,16 +10,9 @@ import Math.{max, min}
 object RegAlloc {
   type Allocator = Map[Local, Arg]
 
-  val stats = mutable.Map.empty[Int, Int]
-
-  def allocateRegisters(insts: Seq[Inst], cfg: CFG, printIntervals: Boolean = false): (Allocator, Int) = {
+  def allocateRegisters(insts: Seq[Inst], cfg: CFG): (Allocator, Int) = {
     // Interval computing
     val intervals = buildIntervals(cfg, insts.size)
-    if (printIntervals) {
-      intervals.foreach {
-        case (Local("src", id), RegAlloc.Interval(ranges)) => println(id, ranges)
-      }
-    }
 
     // Linear scan algorithm
     var unhandled = intervals.toSeq.sortBy {
@@ -85,7 +78,6 @@ object RegAlloc {
 
       val (reg, maxVal) = freeUntil.maxBy(_._2)
       if (maxVal != 0 && current._2.ranges.last._2 < maxVal) {
-        //println("putting", current._1.show, Arg.R(reg).toStr)
         allocator.put(current._1, Arg.R(reg))
       } else {
         // Allocation failed, allocate blocked regs
@@ -112,23 +104,14 @@ object RegAlloc {
 
         val (reg, maxVal) = nextUse.max
         if (current._2.start < maxVal) {
-          //println("putting", current._1.show, Arg.R(nextSpill).toStr)
           allocator.put(current._1, Arg.R(nextSpill))
           nextSpill += 1
         } else {
-          //println("updating", )
           allocator.filter {
             case (_, Arg.R(r)) => r == reg
           }.foreach { case (local, _) =>
             allocator.update(local, Arg.R(nextSpill))
-            //nextSpill += 1
           }
-          /*
-          allocator.update(allocator.find {
-            case (_, Arg.R(r)) => r == reg
-          }.head._1, Arg.R(nextSpill))
-          */
-          //println("putting", current._1.show, Arg.R(reg).toStr)
           allocator.put(current._1, Arg.R(reg))
           nextSpill += 1
         }
@@ -139,13 +122,8 @@ object RegAlloc {
           active.put(current._1, current._2)
         case _ => ()
       }
-
     }
 
-    stats.get(nextSpill - 8) match {
-      case Some(i) => stats.update(nextSpill - 8, i+1)
-      case None    => stats.put(nextSpill - 8, 1)
-    }
     (allocator.toMap, nextSpill - 8)
   }
 
@@ -201,7 +179,7 @@ object RegAlloc {
         val operands: Seq[Val] = inst match {
           case Inst.Let(_, op) =>
             op match {
-              case Op.Call(_, ptr, args, _) => // TODO unwind is Unwind or None
+              case Op.Call(_, ptr, args, _) =>
                 ptr +: args
               case Op.Load(_, ptr, _) =>
                 Seq(ptr)
@@ -231,7 +209,7 @@ object RegAlloc {
                 Seq(obj)
               case Op.Dynmethod(obj, _) =>
                 Seq(obj)
-              case Op.Module(_, _) => // TODO unwind is Unwind or None
+              case Op.Module(_, _) =>
                 Seq()
               case Op.As(_, obj) =>
                 Seq(obj)
@@ -288,7 +266,7 @@ object RegAlloc {
     intervals.toMap
   }
 
-  case class Interval(val ranges: Seq[(Int, Int)]) {
+  case class Interval(ranges: Seq[(Int, Int)]) {
     def start: Int = ranges.head._1
     def end: Int = ranges.last._2
 
@@ -319,7 +297,7 @@ object RegAlloc {
       max(pos, ranges.dropWhile { case (_, e) => e < pos }.head._1)
     }
 
-    def nextIntersection(that: Interval, pos: Int): Option[Int] = { // TODO suboptimal
+    def nextIntersection(that: Interval, pos: Int): Option[Int] = {
       (pos to max(this.ranges.last._2, that.ranges.last._2)).foreach {
         i => if (this.covers(i) && that.covers(i)) return Some(i)
       }

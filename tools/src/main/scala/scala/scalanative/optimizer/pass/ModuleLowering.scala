@@ -89,7 +89,6 @@ class ModuleLowering(implicit top: Top, fresh: Fresh) extends Pass {
             Inst.Ret(alloc)
           )
         )
-        if (cls.name == Global.Top("scala.Array$")) println(top.moduleArray.index(cls))
 
         buf += clsDefn
         buf += loadDefn
